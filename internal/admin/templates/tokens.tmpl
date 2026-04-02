@@ -1,0 +1,53 @@
+{{ define "tokens.tmpl" }}
+<h1>Project Tokens</h1>
+{{ if .FlashToken }}<div class="flash">Store this token now. It is shown only once: <strong>{{ .FlashToken }}</strong></div>{{ end }}
+<div class="grid">
+  <section class="card">
+    <h2>Create Token</h2>
+    <form method="post" action="/admin/tokens">
+      <select name="project_id" required>
+        <option value="">Choose project</option>
+        {{ range .Projects }}
+        <option value="{{ .ID }}" {{ if eq $.SelectedProject.ID .ID }}selected{{ end }}>{{ .ID }}</option>
+        {{ end }}
+      </select>
+      <input type="text" name="description" placeholder="Description" required>
+      <button type="submit">Generate Token</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Tokens {{ if .SelectedProject.ID }}for {{ .SelectedProject.ID }}{{ end }}</h2>
+    <form method="get" action="/admin/tokens" style="grid-template-columns: 1fr auto;">
+      <select name="project_id" required>
+        <option value="">Choose project</option>
+        {{ range .Projects }}
+        <option value="{{ .ID }}" {{ if eq $.SelectedProject.ID .ID }}selected{{ end }}>{{ .ID }}</option>
+        {{ end }}
+      </select>
+      <button type="submit">Load</button>
+    </form>
+    <table>
+      <thead><tr><th>Prefix</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        {{ range .Tokens }}
+        <tr>
+          <td>{{ .TokenPrefix }}</td>
+          <td>{{ .Status }}</td>
+          <td>{{ .CreatedAt }}</td>
+          <td>
+            {{ if eq .Status "active" }}
+            <form method="post" action="/admin/tokens/{{ .ID }}/revoke">
+              <input type="hidden" name="project_id" value="{{ $.SelectedProject.ID }}">
+              <button class="danger" type="submit">Revoke</button>
+            </form>
+            {{ end }}
+          </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="4">No tokens for this project yet.</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </section>
+</div>
+{{ end }}

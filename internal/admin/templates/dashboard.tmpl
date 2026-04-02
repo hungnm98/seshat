@@ -1,0 +1,47 @@
+{{ define "dashboard.tmpl" }}
+<h1>Dashboard</h1>
+<div class="grid">
+  <section class="card">
+    <h2>System Health</h2>
+    <p><span class="badge">Storage</span> {{ .Health.Storage }}</p>
+    <p><span class="badge">Cache</span> {{ .Health.Cache }}</p>
+    <p><span class="badge">Object Store</span> {{ .Health.ObjectStore }}</p>
+    <p><span class="badge">MCP</span> {{ .Health.MCP }}</p>
+  </section>
+  <section class="card">
+    <h2>Project Count</h2>
+    <p style="font-size: 44px; margin: 0;">{{ len .Projects }}</p>
+    <p class="muted">Projects registered and ready for CLI tokens.</p>
+  </section>
+  <section class="card">
+    <h2>Recent Audit</h2>
+    <table>
+      <tbody>
+        {{ range .AuditLogs }}
+        <tr><td>{{ .Action }}</td><td>{{ .ResourceID }}</td></tr>
+        {{ else }}
+        <tr><td colspan="2">No audit activity yet.</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </section>
+</div>
+<section class="card" style="margin-top: 20px;">
+  <h2>Recent Ingestions</h2>
+  <table>
+    <thead><tr><th>Project</th><th>Commit</th><th>Status</th><th>At</th></tr></thead>
+    <tbody>
+      {{ range .RecentIngestions }}
+      <tr>
+        <td>{{ .ProjectID }}</td>
+        <td>{{ .CommitSHA }}</td>
+        <td>{{ .Status }}</td>
+        <td>{{ .CreatedAt }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="4">No ingestion runs yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}

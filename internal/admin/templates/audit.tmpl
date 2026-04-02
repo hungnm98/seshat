@@ -1,0 +1,21 @@
+{{ define "audit.tmpl" }}
+<h1>Audit Log</h1>
+<section class="card">
+  <table>
+    <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Resource</th><th>ID</th></tr></thead>
+    <tbody>
+      {{ range .Logs }}
+      <tr>
+        <td>{{ .CreatedAt }}</td>
+        <td>{{ .ActorName }}</td>
+        <td>{{ .Action }}</td>
+        <td>{{ .Resource }}</td>
+        <td>{{ .ResourceID }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="5">No audit entries yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}

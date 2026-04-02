@@ -1,0 +1,28 @@
+{{ define "projects.tmpl" }}
+<h1>Projects</h1>
+<div class="grid">
+  <section class="card">
+    <h2>Create Project</h2>
+    <form method="post" action="/admin/projects">
+      <input type="text" name="project_id" placeholder="project_id" required>
+      <input type="text" name="name" placeholder="Display name" required>
+      <input type="text" name="default_branch" placeholder="Default branch" value="main">
+      <textarea name="description" placeholder="Description"></textarea>
+      <button type="submit">Create Project</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Registered Projects</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Default Branch</th></tr></thead>
+      <tbody>
+        {{ range .Projects }}
+        <tr><td>{{ .ID }}</td><td>{{ .Name }}</td><td>{{ .DefaultBranch }}</td></tr>
+        {{ else }}
+        <tr><td colspan="3">No projects registered.</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </section>
+</div>
+{{ end }}

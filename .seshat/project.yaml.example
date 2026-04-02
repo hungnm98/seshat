@@ -1,0 +1,14 @@
+project_id: seshat-go-sample
+repo_path: ./testdata/go_sample
+language_targets:
+  - go
+  - ruby
+include_paths:
+  - cmd
+  - internal
+  - app
+exclude_paths:
+  - vendor
+  - node_modules
+server_endpoint: http://localhost:8080
+token_env_var: SESHAT_PROJECT_TOKEN
