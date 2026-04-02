@@ -1,0 +1,21 @@
+{{ define "ingestions.tmpl" }}
+<h1>Ingestion Runs</h1>
+<section class="card">
+  <table>
+    <thead><tr><th>Project</th><th>Commit</th><th>Status</th><th>Created</th><th>Finished</th></tr></thead>
+    <tbody>
+      {{ range .Runs }}
+      <tr>
+        <td>{{ .ProjectID }}</td>
+        <td>{{ .CommitSHA }}</td>
+        <td>{{ .Status }}</td>
+        <td>{{ .CreatedAt }}</td>
+        <td>{{ .FinishedAt }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="5">No ingestion runs yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}
