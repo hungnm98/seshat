@@ -32,6 +32,7 @@
 ## Storage Strategy
 
 - MVP runtime uses the in-memory store for buildability and fast tests.
+- The runtime can now switch to a Postgres-backed adapter through `SESHAT_STORE_KIND=postgres` and `SESHAT_POSTGRES_DSN`.
 - Compose and migrations prepare PostgreSQL, Redis, and MinIO for the next implementation phase.
 - Raw analysis payloads are retained in the store abstraction so object storage can be introduced without changing API contracts.
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/hungnm98/seshat/internal/admin"
@@ -11,6 +12,7 @@ import (
 	"github.com/hungnm98/seshat/internal/query"
 	"github.com/hungnm98/seshat/internal/storage"
 	"github.com/hungnm98/seshat/internal/storage/memory"
+	postgresstore "github.com/hungnm98/seshat/internal/storage/postgres"
 )
 
 type Services struct {
@@ -26,6 +28,18 @@ func NewServices(ctx context.Context, cfg config.ServerConfig, logger *slog.Logg
 	switch cfg.StoreKind {
 	case "", "memory":
 		store = memory.New()
+	case "postgres":
+		if cfg.PostgresDSN == "" {
+			return Services{}, fmt.Errorf("SESHAT_POSTGRES_DSN is required when SESHAT_STORE_KIND=postgres")
+		}
+		pgStore, err := postgresstore.Open(ctx, cfg.PostgresDSN)
+		if err != nil {
+			return Services{}, err
+		}
+		if err := pgStore.EnsureSchema(ctx); err != nil {
+			return Services{}, err
+		}
+		store = pgStore
 	default:
 		logger.Warn("unsupported store kind for MVP; falling back to memory", "kind", cfg.StoreKind)
 		store = memory.New()

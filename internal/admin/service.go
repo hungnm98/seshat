@@ -120,6 +120,10 @@ func (s *Service) createProject(c *gin.Context) {
 		DefaultBranch: c.PostForm("default_branch"),
 		Description:   c.PostForm("description"),
 	}
+	if project.ID == "" || project.Name == "" {
+		c.String(http.StatusBadRequest, "project_id and name are required")
+		return
+	}
 	if project.DefaultBranch == "" {
 		project.DefaultBranch = "main"
 	}
@@ -158,6 +162,14 @@ func (s *Service) tokensPage(c *gin.Context) {
 
 func (s *Service) createToken(c *gin.Context) {
 	projectID := c.PostForm("project_id")
+	if projectID == "" {
+		c.String(http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if _, ok, _ := s.store.GetProject(c.Request.Context(), projectID); !ok {
+		c.String(http.StatusNotFound, "project not found")
+		return
+	}
 	secret, err := s.auth.CreateProjectToken(c.Request.Context(), projectID, c.PostForm("description"), adminUsername(c), nil)
 	if err == nil {
 		_ = s.store.AddAuditLog(c.Request.Context(), model.AuditLog{
@@ -182,6 +194,10 @@ func (s *Service) createToken(c *gin.Context) {
 func (s *Service) revokeToken(c *gin.Context) {
 	tokenID := c.Param("tokenID")
 	projectID := c.PostForm("project_id")
+	if projectID == "" {
+		c.String(http.StatusBadRequest, "project_id is required")
+		return
+	}
 	if err := s.auth.RevokeProjectToken(c.Request.Context(), tokenID, adminUsername(c)); err == nil {
 		_ = s.store.AddAuditLog(c.Request.Context(), model.AuditLog{
 			ID:         fmt.Sprintf("audit:%d", time.Now().UTC().UnixNano()),
