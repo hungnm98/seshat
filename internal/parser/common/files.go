@@ -6,38 +6,72 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 func CollectFiles(root string, includePaths, excludePaths []string, extensions map[string]struct{}) ([]string, error) {
+	return CollectFilesFromCandidates(root, nil, includePaths, excludePaths, extensions)
+}
+
+func CollectFilesFromCandidates(root string, candidates []string, includePaths, excludePaths []string, extensions map[string]struct{}) ([]string, error) {
 	includeSet := normalizePaths(includePaths)
 	excludeSet := normalizePaths(excludePaths)
-	var files []string
+	files := make([]string, 0)
+	seen := make(map[string]struct{})
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr == nil && rel != "." && shouldSkip(rel, excludeSet) {
-				return filepath.SkipDir
+	if len(candidates) > 0 {
+		for _, candidate := range candidates {
+			rel := normalizeCandidate(candidate)
+			if rel == "" || shouldSkip(rel, excludeSet) || !inInclude(rel, includeSet) {
+				continue
 			}
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		if !inInclude(rel, includeSet) || shouldSkip(rel, excludeSet) {
-			return nil
-		}
-		if _, ok := extensions[filepath.Ext(rel)]; ok {
+			if _, ok := extensions[filepath.Ext(rel)]; !ok {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+				continue
+			}
+			if _, ok := seen[rel]; ok {
+				continue
+			}
+			seen[rel] = struct{}{}
 			files = append(files, rel)
 		}
-		return nil
-	})
-	return files, err
+	} else {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				rel, relErr := filepath.Rel(root, path)
+				if relErr == nil && rel != "." && shouldSkip(rel, excludeSet) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			if !inInclude(rel, includeSet) || shouldSkip(rel, excludeSet) {
+				return nil
+			}
+			if _, ok := extensions[filepath.Ext(rel)]; ok {
+				if _, ok := seen[rel]; !ok {
+					seen[rel] = struct{}{}
+					files = append(files, rel)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	sort.Strings(files)
+	return files, nil
 }
 
 func FileChecksum(root, rel string) (string, error) {
@@ -83,4 +117,14 @@ func shouldSkip(rel string, exclude map[string]struct{}) bool {
 		}
 	}
 	return false
+}
+
+func normalizeCandidate(path string) string {
+	rel := filepath.Clean(strings.TrimSpace(path))
+	rel = strings.TrimPrefix(rel, "./")
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "." || rel == "" {
+		return ""
+	}
+	return rel
 }

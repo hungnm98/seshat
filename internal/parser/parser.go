@@ -13,6 +13,7 @@ type Input struct {
 	RepoPath      string
 	IncludePaths  []string
 	ExcludePaths  []string
+	TargetFiles   []string
 	CommitSHA     string
 	Branch        string
 	SchemaVersion string

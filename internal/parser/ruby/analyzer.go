@@ -36,7 +36,7 @@ func (a *Analyzer) Language() string {
 
 func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.AnalysisBatch, error) {
 	_ = ctx
-	files, err := common.CollectFiles(input.RepoPath, input.IncludePaths, input.ExcludePaths, map[string]struct{}{".rb": {}})
+	files, err := common.CollectFilesFromCandidates(input.RepoPath, input.TargetFiles, input.IncludePaths, input.ExcludePaths, map[string]struct{}{".rb": {}})
 	if err != nil {
 		return model.AnalysisBatch{}, err
 	}
