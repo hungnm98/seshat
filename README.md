@@ -23,6 +23,14 @@ docker compose -f deployments/docker/docker-compose.yml up -d
 go run ./cmd/server
 ```
 
+To run against PostgreSQL instead of the in-memory MVP store:
+
+```bash
+export SESHAT_STORE_KIND=postgres
+export SESHAT_POSTGRES_DSN='postgres://seshat:seshat@localhost:5432/seshat?sslmode=disable'
+go run ./cmd/server
+```
+
 3. Open the admin UI:
 
 - URL: [http://localhost:8080/admin/login](http://localhost:8080/admin/login)
@@ -42,6 +50,7 @@ go run ./cmd/cli scan --config .seshat/project.yaml --mode full
 ## MVP Notes
 
 - Runtime storage defaults to in-memory for the bootstrap skeleton.
+- Setting `SESHAT_STORE_KIND=postgres` switches the server to the Postgres adapter and auto-applies the MVP schema at startup.
 - `go-admin` integration can be enabled with `SESHAT_GOADMIN_ENABLED=true` and `SESHAT_POSTGRES_DSN` configured. The custom admin UI under `/admin/` remains the primary management surface for the MVP.
 - PostgreSQL, Redis, and MinIO are scaffolded for local development and future storage adapters.
 

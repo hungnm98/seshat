@@ -10,6 +10,8 @@
 
 ## Next Phase
 
-- Add PostgreSQL-backed storage adapter
-- Wire Redis cache and MinIO raw snapshot storage
-- Introduce incremental scan planning and worker jobs
+- `TASK-006` Add PostgreSQL-backed storage adapter
+- `TASK-007` Wire Redis cache and MinIO raw snapshot storage
+- `TASK-008` Introduce ingestion worker pipeline and follow-up jobs
+- `TASK-009` Add CLI incremental scan for Go-first repositories
+- `TASK-010` Add end-to-end HTTP integration coverage for admin and ingestion flows

@@ -67,7 +67,8 @@ create table if not exists admin_users (
   avatar text default '',
   remember_token text default '',
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  last_login_at timestamptz
 );
 
 create table if not exists project_tokens (
@@ -104,5 +105,11 @@ create table if not exists audit_logs (
   resource text not null,
   resource_id text not null,
   metadata_json jsonb default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists analysis_batches (
+  project_version_id text primary key references project_versions(id) on delete cascade,
+  raw_payload bytea not null,
   created_at timestamptz not null default now()
 );
