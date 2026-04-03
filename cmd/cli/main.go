@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,10 +70,22 @@ func runScan(args []string) error {
 		RepoPath:      projectCfg.RepoPath,
 		IncludePaths:  projectCfg.IncludePaths,
 		ExcludePaths:  projectCfg.ExcludePaths,
+		TargetFiles:   nil,
 		CommitSHA:     commitSHA,
 		Branch:        branch,
 		SchemaVersion: graphschema.Version,
 		ScanMode:      *mode,
+	}
+	if *mode == "incremental" {
+		targetFiles, err := discoverChangedFiles(projectCfg.RepoPath)
+		if err != nil {
+			return err
+		}
+		if len(targetFiles) == 0 {
+			fmt.Println("no changed files detected; skipping incremental upload")
+			return nil
+		}
+		input.TargetFiles = targetFiles
 	}
 	var batches []model.AnalysisBatch
 	for _, target := range projectCfg.LanguageTargets {
@@ -161,4 +174,44 @@ func usage() {
 	fmt.Println("Usage:")
 	fmt.Println("  seshat-cli scan --config .seshat/project.yaml --mode full")
 	fmt.Println("  seshat-cli auth verify --config .seshat/project.yaml")
+}
+
+func discoverChangedFiles(repoPath string) ([]string, error) {
+	if _, err := exec.Command("git", "-C", filepath.Clean(repoPath), "rev-parse", "--is-inside-work-tree").Output(); err != nil {
+		return nil, fmt.Errorf("discover changed files: %w", err)
+	}
+
+	candidates := make(map[string]struct{})
+	diffCmd := exec.Command("git", "-C", filepath.Clean(repoPath), "diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD")
+	diffOutput, err := diffCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("discover changed files diff: %w", err)
+	}
+	for _, line := range strings.Split(string(diffOutput), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		candidates[line] = struct{}{}
+	}
+
+	untrackedCmd := exec.Command("git", "-C", filepath.Clean(repoPath), "ls-files", "--others", "--exclude-standard")
+	untrackedOutput, err := untrackedCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("discover changed files untracked: %w", err)
+	}
+	for _, line := range strings.Split(string(untrackedOutput), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		candidates[line] = struct{}{}
+	}
+
+	files := make([]string, 0, len(candidates))
+	for file := range candidates {
+		files = append(files, filepath.Clean(file))
+	}
+	sort.Strings(files)
+	return files, nil
 }
