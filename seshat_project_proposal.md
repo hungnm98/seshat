@@ -1,4 +1,4 @@
-# Đề xuất dự án Code Knowledge Graph + AI Context Engine
+# Đề xuất dự án Seshat — Code Knowledge Graph + AI Context Engine
 
 ## 1. Đánh giá nhanh giải pháp bạn đề xuất
 
@@ -74,130 +74,11 @@ Nên triển khai parser theo thứ tự sau:
 
 ---
 
-## 3. Đề xuất tên project theo thần cổ đại
+## 3. Kiến trúc đề xuất đã chỉnh theo ý bạn
 
-Dưới đây là các tên phù hợp cho một hệ thống phân tích code, dựng graph, phục vụ AI.
+**Tên dự án:** **Seshat** — thần ghi chép và tri thức (Ai Cập cổ đại), phù hợp với code indexing, knowledge graph và cấp context cho AI.
 
-## Nhóm tên mạnh về tri thức / ghi chép / hiểu biết
-
-### 1. Thoth
-- Nguồn gốc: thần Ai Cập cổ đại
-- Ý nghĩa: tri thức, chữ viết, ghi chép, ma thuật
-- Rất hợp với hệ thống đọc và hiểu codebase
-
-**Đánh giá:** rất mạnh cho branding kỹ thuật
-
-### 2. Odin
-- Nguồn gốc: Bắc Âu
-- Ý nghĩa: trí tuệ, khám phá, hy sinh để đạt tri thức
-- Hợp cho AI engine hiểu code sâu
-
-**Đánh giá:** mạnh, dễ nhớ, hơi phổ biến
-
-### 3. Athena
-- Nguồn gốc: Hy Lạp
-- Ý nghĩa: trí tuệ, chiến lược, thủ công
-- Hợp nếu muốn tên tinh tế hơn
-
-**Đánh giá:** đẹp, dễ branding
-
-### 4. Seshat
-- Nguồn gốc: Ai Cập
-- Ý nghĩa: thần ghi chép, thư viện, tri thức
-- Rất hợp với code indexing / code knowledge
-
-**Đánh giá:** độc đáo, ít bị trùng
-
-### 5. Mimir
-- Nguồn gốc: Bắc Âu
-- Ý nghĩa: tri thức, giếng trí tuệ
-- Hợp cho knowledge engine
-
-**Đánh giá:** ngắn, đẹp, technical
-
----
-
-## Nhóm tên mạnh về dẫn đường / kết nối / trung gian
-
-### 6. Hermes
-- Nguồn gốc: Hy Lạp
-- Ý nghĩa: sứ giả, trung gian, truyền tin
-- Hợp cho MCP/tool-calling gateway
-
-**Đánh giá:** rất hợp nếu nhấn vào AI tool routing
-
-### 7. Iris
-- Nguồn gốc: Hy Lạp
-- Ý nghĩa: sứ giả kết nối trời và đất
-- Hợp cho context bridge giữa codebase và AI
-
-**Đánh giá:** mềm hơn, đẹp
-
-### 8. Heimdall
-- Nguồn gốc: Bắc Âu
-- Ý nghĩa: người gác cổng, quan sát tất cả
-- Hợp cho project query gateway, graph observability
-
-**Đánh giá:** rất ngầu, hợp hạ tầng
-
----
-
-## Nhóm tên mạnh về bản đồ / cấu trúc / hệ thống
-
-### 9. Janus
-- Nguồn gốc: La Mã
-- Ý nghĩa: nhìn hai phía, cổng chuyển tiếp
-- Hợp cho hệ thống hiểu quan hệ giữa modules và flows
-
-### 10. Atlas
-- Nguồn gốc: Hy Lạp
-- Ý nghĩa: mang cả thế giới, bản đồ
-- Hợp cho code graph và system map
-
-### 11. Anansi
-- Nguồn gốc: Tây Phi
-- Ý nghĩa: mạng lưới, trí khôn, kể chuyện
-- Hợp nếu muốn hình ảnh “web of code”
-
----
-
-## 4. Tên nên chọn
-
-### Top 5 khuyến nghị
-1. **Thoth**
-2. **Seshat**
-3. **Mimir**
-4. **Hermes**
-5. **Atlas**
-
-### Gợi ý chọn theo định vị
-
-#### Nếu muốn nhấn mạnh “AI hiểu code”
-- **Thoth**
-- **Mimir**
-
-#### Nếu muốn nhấn mạnh “code graph / knowledge graph”
-- **Seshat**
-- **Atlas**
-
-#### Nếu muốn nhấn mạnh “MCP / tool routing / AI bridge”
-- **Hermes**
-- **Heimdall**
-
-### Tên mình khuyên chọn nhất
-## **Thoth**
-
-Vì:
-- ngắn
-- dễ nhớ
-- rất hợp semantic “tri thức, ghi chép, hiểu biết”
-- phù hợp với sản phẩm đọc code, build graph, cấp context cho AI
-
----
-
-## 5. Kiến trúc đề xuất đã chỉnh theo ý bạn
-
-## 5.1 Thành phần chính
+## 3.1 Thành phần chính
 
 ### A. Local CLI
 Chạy ở máy dev hoặc CI.
@@ -242,7 +123,7 @@ Nhiệm vụ:
 
 ---
 
-## 5.2 Luồng vận hành
+## 3.2 Luồng vận hành
 
 ### Luồng 1: full scan
 1. User chạy CLI trong repo
@@ -272,9 +153,9 @@ Nhiệm vụ:
 
 ---
 
-## 6. Input / Output cần chốt rõ
+## 4. Input / Output cần chốt rõ
 
-## 6.1 Input của CLI
+## 4.1 Input của CLI
 
 ### Input bắt buộc
 - `project_id`
@@ -287,7 +168,7 @@ Nhiệm vụ:
 ### Ví dụ
 ```json
 {
-  "project_id": "thoth-payment-service",
+  "project_id": "seshat-payment-service",
   "repo_path": "/workspace/payment-service",
   "language_targets": ["ruby", "go", "java", "javascript", "typescript"],
   "include_paths": ["app", "lib", "internal", "pkg", "src"],
@@ -296,12 +177,12 @@ Nhiệm vụ:
 }
 ```
 
-## 6.2 Output của CLI gửi lên server
+## 4.2 Output của CLI gửi lên server
 
 ### Dữ liệu metadata
 ```json
 {
-  "project_id": "thoth-payment-service",
+  "project_id": "seshat-payment-service",
   "commit_sha": "abc123",
   "branch": "main",
   "schema_version": "v1",
@@ -335,9 +216,9 @@ Nhiệm vụ:
 
 ---
 
-## 7. Thiết kế MCP/tool calling theo project
+## 5. Thiết kế MCP/tool calling theo project
 
-## 7.1 Nguyên tắc
+## 5.1 Nguyên tắc
 Mọi tool phải nhận `project_id`.
 
 ### Ví dụ
@@ -349,7 +230,7 @@ Mọi tool phải nhận `project_id`.
 - `trace_request_flow(project_id, entrypoint)`
 - `build_llm_context(project_id, question, max_blocks?)`
 
-## 7.2 Ví dụ tool schema
+## 5.2 Ví dụ tool schema
 
 ### Tool: `find_symbol`
 ```json
@@ -387,9 +268,9 @@ Mọi tool phải nhận `project_id`.
 
 ---
 
-## 8. Stack công nghệ khuyến nghị
+## 6. Stack công nghệ khuyến nghị
 
-## 8.1 Thành phần server
+## 6.1 Thành phần server
 - **Go** cho:
   - API server
   - ingestion endpoint
@@ -398,7 +279,7 @@ Mọi tool phải nhận `project_id`.
   - context builder
   - worker
 
-## 8.2 Parser
+## 6.2 Parser
 - **Go native parser** cho Go
 - **Ruby Prism** hoặc parser gem phù hợp cho Ruby
 - **tree-sitter-java** cho Java
@@ -409,7 +290,7 @@ Mọi tool phải nhận `project_id`.
 - Không nên cố ép mọi ngôn ngữ dùng một parser duy nhất.
 - Nên có **adapter per language**, output cùng một schema graph chung.
 
-## 8.3 Storage
+## 6.3 Storage
 ### Phương án chính
 - **PostgreSQL** cho metadata + relation table + recursive query
 - **Redis** cho cache
@@ -432,10 +313,10 @@ Lý do:
 
 ---
 
-## 9. Thiết kế project structure đề xuất
+## 7. Thiết kế project structure đề xuất
 
 ```text
-thoth/
+seshat/
   cmd/
     server/
     cli/
@@ -477,7 +358,7 @@ thoth/
 
 ---
 
-## 10. Giải pháp tối ưu hơn cho CLI
+## 8. Giải pháp tối ưu hơn cho CLI
 
 Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
@@ -501,7 +382,7 @@ Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
 ---
 
-## 11. Thiết kế data model rút gọn
+## 9. Thiết kế data model rút gọn
 
 ## Bảng `projects`
 - id
@@ -552,7 +433,7 @@ Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
 ---
 
-## 12. Nên hỗ trợ loại relation nào trước
+## 10. Nên hỗ trợ loại relation nào trước
 
 ### MVP relations
 - `declared_in`
@@ -578,7 +459,7 @@ Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
 ---
 
-## 13. Khuyến nghị MVP thực dụng
+## 11. Khuyến nghị MVP thực dụng
 
 ## MVP 1
 - CLI scan local repo
@@ -604,7 +485,7 @@ Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
 ---
 
-## 14. Rủi ro và cách tránh
+## 12. Rủi ro và cách tránh
 
 ### Rủi ro 1: graph sai vì parser khác nhau
 **Cách tránh:** định nghĩa schema trung gian thật rõ và viết golden test cho từng language adapter.
@@ -620,10 +501,10 @@ Thay vì để CLI build toàn bộ graph cuối cùng, nên chia 2 lớp:
 
 ---
 
-## 15. Quyết định kiến trúc cuối cùng mình khuyên
+## 13. Quyết định kiến trúc cuối cùng mình khuyên
 
-## Tên project khuyên dùng
-**Thoth**
+## Tên dự án
+**Seshat**
 
 ## Kiến trúc khuyên dùng
 - **CLI local/CI-based analysis**
@@ -649,10 +530,10 @@ Giải pháp bạn đề xuất **ổn**, thậm chí là hướng khá thực t
 
 ---
 
-## 16. Prompt ngắn gọn để tiếp tục giao cho AI code
+## 14. Prompt ngắn gọn để tiếp tục giao cho AI code
 
 ```text
-Hãy triển khai hệ thống Thoth - Code Knowledge Graph + AI Context Engine.
+Hãy triển khai hệ thống Seshat — Code Knowledge Graph + AI Context Engine.
 
 Yêu cầu:
 - User dùng CLI để scan source code local hoặc trong CI.
