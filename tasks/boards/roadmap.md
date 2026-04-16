@@ -15,3 +15,14 @@
 - `TASK-008` Introduce ingestion worker pipeline and follow-up jobs
 - `TASK-009` Add CLI incremental scan for Go-first repositories
 - `TASK-010` Add end-to-end HTTP integration coverage for admin and ingestion flows
+
+## CLI-First Local MCP
+
+- `TASK-011` Redesign Seshat CLI command contract
+- `TASK-012` Implement local init, ingest, inspect, and status
+- `TASK-013` Implement local push and watch
+- `TASK-014` Implement local query engine over JSON graph
+- `TASK-015` Implement local MCP stdio server in CLI
+- `TASK-016` Implement setup for Cursor and Codex
+- `TASK-017` CLI-first docs and smoke demo
+- `TASK-018` Render local dependency graph charts from CLI

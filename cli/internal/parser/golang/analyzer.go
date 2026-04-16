@@ -46,9 +46,10 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 	symbols := make(map[string]model.Symbol)
 	filesOut := make([]model.File, 0, len(files))
 	type deferredRelation struct {
-		from   string
-		target string
-		kind   model.RelationType
+		from     string
+		target   string
+		kind     model.RelationType
+		metadata map[string]interface{}
 	}
 	var deferred []deferredRelation
 
@@ -70,7 +71,8 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 			Checksum: checksum,
 		})
 
-		packageID := "symbol:go:" + parsed.Name.Name + ":package"
+		packageKey := packageKey(parsed.Name.Name, rel)
+		packageID := "symbol:go:" + packageKey + ":package"
 		if _, ok := symbols[packageID]; !ok {
 			symbols[packageID] = model.Symbol{
 				ID:        packageID,
@@ -79,7 +81,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 				Name:      parsed.Name.Name,
 				Language:  "go",
 				Path:      rel,
-				Signature: parsed.Name.Name,
+				Signature: packageKey,
 				LineStart: lineOf(fset, parsed.Package),
 				LineEnd:   lineOf(fset, parsed.Package),
 			}
@@ -87,7 +89,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 
 		for _, imp := range parsed.Imports {
 			name := importAlias(imp)
-			importID := "symbol:go:import:" + parsed.Name.Name + ":" + name
+			importID := "symbol:go:import:" + packageKey + ":" + name
 			if _, ok := symbols[importID]; !ok {
 				symbols[importID] = model.Symbol{
 					ID:        importID,
@@ -107,7 +109,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 		ast.Inspect(parsed, func(node ast.Node) bool {
 			switch decl := node.(type) {
 			case *ast.FuncDecl:
-				symbol := buildFuncSymbol(fset, fileID, rel, parsed.Name.Name, decl)
+				symbol := buildFuncSymbol(fset, fileID, rel, packageKey, decl)
 				symbols[symbol.ID] = symbol
 				parent := packageID
 				if symbol.ParentID != "" {
@@ -116,11 +118,11 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 				batch.Relations = append(batch.Relations, relation("declared", symbol.ID, fileID, model.RelationDeclaredIn, input.ProjectID))
 				batch.Relations = append(batch.Relations, relation("contains", parent, symbol.ID, model.RelationContains, input.ProjectID))
 				if decl.Body != nil {
-					callTargets := discoverCallTargets(parsed.Name.Name, decl.Body)
+					callTargets := discoverCallTargets(decl.Body)
 					for _, target := range callTargets {
 						deferred = append(deferred, deferredRelation{from: symbol.ID, target: target, kind: model.RelationCalls})
 					}
-					references := discoverReferences(parsed.Name.Name, decl.Body)
+					references := discoverReferences(decl.Body)
 					for _, target := range references {
 						deferred = append(deferred, deferredRelation{from: symbol.ID, target: target, kind: model.RelationReferences})
 					}
@@ -131,7 +133,7 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 					if !ok {
 						continue
 					}
-					typeID := "symbol:go:" + parsed.Name.Name + ":type:" + typeSpec.Name.Name
+					typeID := "symbol:go:" + packageKey + ":type:" + typeSpec.Name.Name
 					symbols[typeID] = model.Symbol{
 						ID:        typeID,
 						FileID:    fileID,
@@ -159,12 +161,18 @@ func (a *Analyzer) Analyze(ctx context.Context, input parser.Input) (model.Analy
 		batch.Symbols = append(batch.Symbols, symbol)
 	}
 	for _, item := range deferred {
-		if targetID, ok := resolveDeferredTarget(symbols, item.from, item.target, item.kind); ok {
+		if targetID, metadata, ok := resolveDeferredTarget(symbols, item.from, item.target, item.kind); ok {
 			prefix := "calls"
 			if item.kind == model.RelationReferences {
 				prefix = "refs"
 			}
-			batch.Relations = append(batch.Relations, relation(prefix, item.from, targetID, item.kind, input.ProjectID))
+			for key, value := range item.metadata {
+				if metadata == nil {
+					metadata = make(map[string]interface{})
+				}
+				metadata[key] = value
+			}
+			batch.Relations = append(batch.Relations, relationWithMetadata(prefix, item.from, targetID, item.kind, input.ProjectID, metadata))
 		}
 	}
 	dedupRelations(&batch.Relations)
@@ -201,7 +209,7 @@ func buildFuncSymbol(fset *token.FileSet, fileID, rel, pkg string, decl *ast.Fun
 	}
 }
 
-func discoverCallTargets(pkg string, body *ast.BlockStmt) []string {
+func discoverCallTargets(body *ast.BlockStmt) []string {
 	targets := make(map[string]struct{})
 	ast.Inspect(body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -212,8 +220,8 @@ func discoverCallTargets(pkg string, body *ast.BlockStmt) []string {
 		case *ast.Ident:
 			targets[fun.Name] = struct{}{}
 		case *ast.SelectorExpr:
-			if ident, ok := fun.X.(*ast.Ident); ok {
-				targets[ident.Name+"."+fun.Sel.Name] = struct{}{}
+			if rendered := renderSelector(fun); rendered != "" {
+				targets[rendered] = struct{}{}
 			}
 		}
 		return true
@@ -221,7 +229,7 @@ func discoverCallTargets(pkg string, body *ast.BlockStmt) []string {
 	return sortKeys(targets)
 }
 
-func discoverReferences(pkg string, body *ast.BlockStmt) []string {
+func discoverReferences(body *ast.BlockStmt) []string {
 	refs := make(map[string]struct{})
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch expr := node.(type) {
@@ -230,7 +238,7 @@ func discoverReferences(pkg string, body *ast.BlockStmt) []string {
 			case *ast.Ident:
 				refs[typed.Name] = struct{}{}
 			case *ast.SelectorExpr:
-				refs[typed.Sel.Name] = struct{}{}
+				refs[renderNode(typed)] = struct{}{}
 			}
 		}
 		return true
@@ -247,6 +255,10 @@ func importAlias(spec *ast.ImportSpec) string {
 }
 
 func relation(prefix, from, to string, relationType model.RelationType, projectID string) model.Relation {
+	return relationWithMetadata(prefix, from, to, relationType, projectID, nil)
+}
+
+func relationWithMetadata(prefix, from, to string, relationType model.RelationType, projectID string, metadata map[string]interface{}) model.Relation {
 	id := fmt.Sprintf("relation:%s:%s:%s:%s", prefix, relationType, from, to)
 	return model.Relation{
 		ID:           id,
@@ -254,6 +266,7 @@ func relation(prefix, from, to string, relationType model.RelationType, projectI
 		FromSymbolID: from,
 		ToSymbolID:   to,
 		Type:         relationType,
+		Metadata:     metadata,
 	}
 }
 
@@ -308,29 +321,74 @@ func parserNow() time.Time {
 	return time.Now().UTC()
 }
 
-func resolveDeferredTarget(symbols map[string]model.Symbol, fromID, target string, kind model.RelationType) (string, bool) {
+func renderSelector(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		left := renderSelector(typed.X)
+		if left == "" {
+			return typed.Sel.Name
+		}
+		return left + "." + typed.Sel.Name
+	default:
+		return ""
+	}
+}
+
+func packageKey(packageName, rel string) string {
+	dir := filepath.ToSlash(filepath.Dir(rel))
+	if dir == "." || dir == "" {
+		return packageName
+	}
+	return packageName + "@" + dir
+}
+
+func resolveDeferredTarget(symbols map[string]model.Symbol, fromID, target string, kind model.RelationType) (string, map[string]interface{}, bool) {
 	pkg := packageFromSymbolID(fromID)
 	switch kind {
 	case model.RelationCalls:
 		if strings.Contains(target, ".") {
-			parts := strings.SplitN(target, ".", 2)
+			parts := strings.Split(target, ".")
+			if len(parts) < 2 {
+				return "", nil, false
+			}
+			receiver := parts[len(parts)-2]
+			method := parts[len(parts)-1]
 			candidateSuffixes := []string{
-				":method:" + parts[0] + "." + parts[1],
-				":method:Repository." + parts[1],
-				":method:Service." + parts[1],
+				":method:" + receiver + "." + method,
+				":method:Repository." + method,
+				":method:Service." + method,
 			}
 			for _, suffix := range candidateSuffixes {
 				if id, ok := findBySuffix(symbols, pkg, suffix); ok {
-					return id, true
+					return id, nil, true
 				}
 			}
-			return "", false
+			if len(parts) >= 3 {
+				if id, ok := findHeuristicMethodTarget(symbols, method); ok {
+					return id, map[string]interface{}{
+						"resolution": "heuristic_selector_method",
+						"selector":   target,
+					}, true
+				}
+			}
+			return "", nil, false
 		}
-		return findBySuffix(symbols, pkg, ":func:"+target, ":method:Service."+target, ":method:"+target)
+		if id, ok := findBySuffix(symbols, pkg, ":func:"+target, ":method:Service."+target, ":method:"+target); ok {
+			return id, nil, true
+		}
+		return "", nil, false
 	case model.RelationReferences:
-		return findBySuffix(symbols, pkg, ":type:"+target)
+		if strings.Contains(target, ".") {
+			return "", nil, false
+		}
+		if id, ok := findBySuffix(symbols, pkg, ":type:"+target); ok {
+			return id, nil, true
+		}
+		return "", nil, false
 	default:
-		return "", false
+		return "", nil, false
 	}
 }
 
@@ -349,12 +407,39 @@ func findBySuffix(symbols map[string]model.Symbol, pkg string, suffixes ...strin
 			return candidate, true
 		}
 	}
-	for id := range symbols {
-		for _, suffix := range suffixes {
-			if strings.HasSuffix(id, suffix) {
-				return id, true
-			}
-		}
-	}
 	return "", false
+}
+
+func findHeuristicMethodTarget(symbols map[string]model.Symbol, method string) (string, bool) {
+	var candidates []model.Symbol
+	for _, symbol := range symbols {
+		if symbol.Kind != "method" || symbol.Name != method {
+			continue
+		}
+		if strings.HasSuffix(symbol.Path, "_test.go") || strings.Contains(symbol.Signature, "Mock") || strings.Contains(symbol.ID, "_mock") {
+			continue
+		}
+		candidates = append(candidates, symbol)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		iLower := receiverLooksPrivate(candidates[i].Signature)
+		jLower := receiverLooksPrivate(candidates[j].Signature)
+		if iLower != jLower {
+			return iLower
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	if len(candidates) == 0 {
+		return "", false
+	}
+	return candidates[0].ID, true
+}
+
+func receiverLooksPrivate(signature string) bool {
+	receiver, _, ok := strings.Cut(signature, ".")
+	if !ok || receiver == "" {
+		return false
+	}
+	first := receiver[0]
+	return first >= 'a' && first <= 'z'
 }
