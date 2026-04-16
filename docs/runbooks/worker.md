@@ -25,6 +25,8 @@ SESHAT_WORKER_ONCE=true \
 go run ./cmd/worker
 ```
 
+Run this command from the `server/` project directory.
+
 ## Notes
 
 - The Redis wrapper speaks RESP directly and is intended for lightweight health checks and simple key writes.

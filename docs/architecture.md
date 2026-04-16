@@ -2,10 +2,10 @@
 
 ## Runtime Overview
 
-- `cmd/cli` scans a local repository, builds an `AnalysisBatch`, and uploads it to the server using a project-scoped bearer token.
-- `cmd/server` serves REST APIs, the admin UI, token verification, ingestion, and graph queries.
-- `cmd/worker` is reserved for batch merge, cache warming, and future background processing.
-- `cmd/mcp` publishes the initial MCP tool contract for project-scoped graph queries.
+- `cli/cmd/seshat` scans a local repository, builds an `AnalysisBatch`, uploads it to the server, and exposes agent-facing CLI queries.
+- `server/cmd/server` serves REST APIs, the admin UI, token verification, ingestion, and graph queries.
+- `server/cmd/worker` is reserved for batch merge, cache warming, and future background processing.
+- `server/cmd/mcp` publishes the initial MCP tool contract for project-scoped graph queries.
 
 ## Core Flows
 
@@ -28,6 +28,30 @@
 1. A client calls a project-scoped query endpoint with the project token.
 2. The query service resolves the latest project version.
 3. The server returns matching symbols or depth-bounded callers/callees.
+
+### File Dependency Graph
+
+1. An agent or CLI calls `GET /api/v1/projects/{project_id}/graph/dependencies?file={path}&depth={n}`.
+2. The query service resolves the latest project version.
+3. The graph builder finds symbols declared in the requested file.
+4. It traverses symbol relations in both directions:
+   - `depends_on`: files the requested file calls, references, imports, or implements.
+   - `dependents`: files that call, reference, import, or implement symbols from the requested file.
+5. The response includes root file symbols, related files, symbols, relations, relation reasons, depth, and version metadata.
+
+CLI usage:
+
+```bash
+cd cli
+go run ./cmd/seshat dependencies --config ../.seshat/project.yaml --file internal/order/service.go --depth 1
+```
+
+This is the primary query shape for agents before editing a file because it answers:
+
+- what this file depends on
+- what depends on this file
+- which symbols and relation types connect those files
+- which tests or callers are likely worth inspecting next
 
 ## Storage Strategy
 
