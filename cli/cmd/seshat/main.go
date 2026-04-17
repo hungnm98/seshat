@@ -267,9 +267,10 @@ func runWatch(args []string, stdout, stderr io.Writer) error {
 		if len(changed) == 0 {
 			continue
 		}
-		previous = next
 		if err := runPush([]string{"--config", *configPath}, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "push failed: %v\n", err)
+		} else {
+			previous = next
 		}
 	}
 	return nil
@@ -758,12 +759,48 @@ func usage(out io.Writer) {
 }
 
 func discoverChangedFiles(repoPath string) ([]string, error) {
-	if _, err := execCommand("git", "-C", filepath.Clean(repoPath), "rev-parse", "--is-inside-work-tree").Output(); err != nil {
+	clean := filepath.Clean(repoPath)
+	if _, err := execCommand("git", "-C", clean, "rev-parse", "--is-inside-work-tree").Output(); err != nil {
 		return nil, fmt.Errorf("discover changed files: %w", err)
 	}
 
+	// git always outputs paths relative to the git root, but repoPath may be a
+	// subdirectory of the root (e.g. a monorepo). Compute the prefix to strip.
+	gitRootBytes, err := execCommand("git", "-C", clean, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil, fmt.Errorf("discover changed files git root: %w", err)
+	}
+	gitRoot := filepath.Clean(strings.TrimSpace(string(gitRootBytes)))
+	repoAbs, err := filepath.Abs(clean)
+	if err != nil {
+		return nil, err
+	}
+	// Resolve symlinks so both sides use canonical paths (e.g. /tmp → /private/tmp on macOS).
+	if r, err2 := filepath.EvalSymlinks(gitRoot); err2 == nil {
+		gitRoot = r
+	}
+	if r, err2 := filepath.EvalSymlinks(repoAbs); err2 == nil {
+		repoAbs = r
+	}
+	prefix, err := filepath.Rel(gitRoot, repoAbs)
+	if err != nil {
+		return nil, err
+	}
+	// stripPrefix converts a git-root-relative path to a repoPath-relative path.
+	// Returns ("", false) when the path is outside repoPath.
+	stripPrefix := func(p string) (string, bool) {
+		if prefix == "." {
+			return p, true
+		}
+		rel, relErr := filepath.Rel(prefix, p)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			return "", false
+		}
+		return rel, true
+	}
+
 	candidates := make(map[string]struct{})
-	diffCmd := execCommand("git", "-C", filepath.Clean(repoPath), "diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD")
+	diffCmd := execCommand("git", "-C", clean, "diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD")
 	diffOutput, err := diffCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("discover changed files diff: %w", err)
@@ -773,10 +810,12 @@ func discoverChangedFiles(repoPath string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		candidates[line] = struct{}{}
+		if rel, ok := stripPrefix(line); ok {
+			candidates[rel] = struct{}{}
+		}
 	}
 
-	untrackedCmd := execCommand("git", "-C", filepath.Clean(repoPath), "ls-files", "--others", "--exclude-standard")
+	untrackedCmd := execCommand("git", "-C", clean, "ls-files", "--others", "--exclude-standard")
 	untrackedOutput, err := untrackedCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("discover changed files untracked: %w", err)
@@ -786,7 +825,9 @@ func discoverChangedFiles(repoPath string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		candidates[line] = struct{}{}
+		if rel, ok := stripPrefix(line); ok {
+			candidates[rel] = struct{}{}
+		}
 	}
 
 	files := make([]string, 0, len(candidates))
