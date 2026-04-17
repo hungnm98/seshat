@@ -18,6 +18,7 @@ type Input struct {
 	Branch        string
 	SchemaVersion string
 	ScanMode      string
+	Parallelism   int
 }
 
 type Analyzer interface {
