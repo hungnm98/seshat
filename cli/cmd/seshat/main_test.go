@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/hungnm98/seshat-cli/internal/localindex"
+	"github.com/hungnm98/seshat-cli/pkg/model"
 )
 
 func TestDiscoverChangedFiles(t *testing.T) {
@@ -58,11 +64,14 @@ func Validate() {}
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if err := run([]string{"ingest", "--config", configPath}, &stdout, &stderr); err != nil {
+	if err := run([]string{"ingest", "--config", configPath, "--parallel", "2", "-v"}, &stdout, &stderr); err != nil {
 		t.Fatalf("ingest failed: %v\nstderr=%s", err, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "symbols") {
 		t.Fatalf("expected ingest summary, got %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "parallel=2") || !strings.Contains(stderr.String(), "target=go done") {
+		t.Fatalf("expected verbose ingest logs, got %s", stderr.String())
 	}
 	stdout.Reset()
 	if err := run([]string{"status", "--config", configPath, "--json"}, &stdout, &stderr); err != nil {
@@ -118,6 +127,68 @@ func Run() {}
 	}
 	if !strings.Contains(stdout.String(), `"find_symbol"`) || !strings.Contains(stdout.String(), `"Run"`) {
 		t.Fatalf("unexpected mcp output: %s", stdout.String())
+	}
+}
+
+func TestMCPCommandReloadsUpdatedLocalIndex(t *testing.T) {
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".seshat", "project.yaml")
+	writeFile(t, repo, ".seshat/project.yaml", fmt.Sprintf(`project_id: proj
+repo_path: %s
+language_targets:
+  - go
+include_paths: []
+exclude_paths: []
+`, repo))
+	writeMCPReloadGraph(t, configPath, "RunBefore")
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := runMCP([]string{"--config", configPath}, stdinReader, stdoutWriter)
+		_ = stdoutWriter.Close()
+		done <- err
+	}()
+	scanner := bufio.NewScanner(stdoutReader)
+	call := func(id int, query string) string {
+		t.Helper()
+		_, err := fmt.Fprintf(stdinWriter, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"find_symbol","arguments":{"project_id":"proj","query":%q}}}`+"\n", id, query)
+		if err != nil {
+			t.Fatalf("write MCP request: %v", err)
+		}
+		if !scanner.Scan() {
+			t.Fatalf("read MCP response failed: %v", scanner.Err())
+		}
+		return scanner.Text()
+	}
+
+	first := call(1, "RunBefore")
+	if !strings.Contains(first, "RunBefore") {
+		t.Fatalf("expected first response to use initial index, got %s", first)
+	}
+	writeMCPReloadGraph(t, configPath, "RunAfterReload")
+	second := call(2, "RunAfterReload")
+	if !strings.Contains(second, "RunAfterReload") {
+		t.Fatalf("expected second response to use updated index, got %s", second)
+	}
+
+	_ = stdinWriter.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("mcp failed: %v", err)
+	}
+}
+
+func writeMCPReloadGraph(t *testing.T, configPath, symbolName string) {
+	t.Helper()
+	err := localindex.WriteGraph(configPath, model.AnalysisBatch{
+		Metadata: model.GraphMetadata{ProjectID: "proj"},
+		Symbols: []model.Symbol{
+			{ID: "symbol:go:main:func:" + symbolName, Kind: "function", Name: symbolName, Path: "main.go"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteGraph returned error: %v", err)
 	}
 }
 

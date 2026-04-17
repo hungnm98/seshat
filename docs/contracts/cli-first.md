@@ -1,22 +1,24 @@
 # CLI-First Local Index Contract
 
-Seshat V1 can run without the server. The CLI parses a repository, writes a local JSON graph, and exposes that graph through a local MCP stdio server for tools such as Codex and Cursor.
+Seshat V1 can run without the server. The CLI parses a repository, writes a local JSON graph, and exposes that graph through a local MCP stdio server for tools such as Codex, Cursor, and Claude.
 
 ## Commands
 
 ```bash
 seshat init
-seshat ingest [--all] [--dry-run] [--json]
+seshat ingest [--all] [--parallel 1] [-v] [--dry-run] [--json]
 seshat push [--force]
 seshat watch [--debounce 2000]
 seshat inspect [--json] [--reparse]
 seshat status [--json]
 seshat mcp
 seshat graph --file path/to/file.go [--format mermaid|dot|json]
-seshat setup [--client cursor|codex|all] [--print]
+seshat setup [--client cursor|codex|claude|all] [--print]
 ```
 
 `login` is intentionally out of scope for local-only V1. Existing server-backed `auth verify` and `dependencies` commands remain for compatibility, but the local workflow does not require them.
+
+`ingest` parses files with one worker by default. Increase `--parallel` or use the `--threads` alias for large repositories. It prints basic progress logs by default; add `-v` or `--verbose` for target-level timing and error context.
 
 ## Local Files
 
@@ -62,7 +64,7 @@ Supported directions are `both`, `depends-on`, and `dependents`. Internal Go imp
 
 ## Setup
 
-`seshat setup --client all --print` prints Cursor and Codex MCP snippets that run:
+`seshat setup --client all --print` prints Cursor, Codex, and Claude MCP snippets that run:
 
 ```bash
 seshat mcp --config /absolute/path/to/.seshat/project.yaml

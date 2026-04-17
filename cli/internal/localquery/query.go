@@ -17,10 +17,17 @@ const (
 )
 
 type Service struct {
-	projectID string
-	batch     model.AnalysisBatch
-	symbols   map[string]model.Symbol
-	files     map[string]model.File
+	projectID       string
+	batch           model.AnalysisBatch
+	symbols         map[string]model.Symbol
+	symbolsByFile   map[string][]model.Symbol
+	symbolsByKind   map[string][]model.Symbol
+	files           map[string]model.File
+	filesByPath     map[string]model.File
+	filesByLanguage map[string][]model.File
+	relationsByID   map[string]model.Relation
+	relationsByFrom map[model.RelationType]map[string][]model.Relation
+	relationsByTo   map[model.RelationType]map[string][]model.Relation
 }
 
 func New(projectID string, batch model.AnalysisBatch) (*Service, error) {
@@ -31,16 +38,54 @@ func New(projectID string, batch model.AnalysisBatch) (*Service, error) {
 		return nil, fmt.Errorf("invalid project_id %q for local index %q", projectID, batch.Metadata.ProjectID)
 	}
 	s := &Service{
-		projectID: batch.Metadata.ProjectID,
-		batch:     batch,
-		symbols:   make(map[string]model.Symbol, len(batch.Symbols)),
-		files:     make(map[string]model.File, len(batch.Files)),
+		projectID:       batch.Metadata.ProjectID,
+		batch:           batch,
+		symbols:         make(map[string]model.Symbol, len(batch.Symbols)),
+		symbolsByFile:   make(map[string][]model.Symbol),
+		symbolsByKind:   make(map[string][]model.Symbol),
+		files:           make(map[string]model.File, len(batch.Files)),
+		filesByPath:     make(map[string]model.File, len(batch.Files)),
+		filesByLanguage: make(map[string][]model.File),
+		relationsByID:   make(map[string]model.Relation, len(batch.Relations)),
+		relationsByFrom: make(map[model.RelationType]map[string][]model.Relation),
+		relationsByTo:   make(map[model.RelationType]map[string][]model.Relation),
 	}
 	for _, symbol := range batch.Symbols {
 		s.symbols[symbol.ID] = symbol
+		s.symbolsByFile[symbol.FileID] = append(s.symbolsByFile[symbol.FileID], symbol)
+		kind := strings.ToLower(symbol.Kind)
+		s.symbolsByKind[kind] = append(s.symbolsByKind[kind], symbol)
 	}
 	for _, file := range batch.Files {
 		s.files[file.ID] = file
+		s.filesByPath[file.Path] = file
+		s.filesByLanguage[file.Language] = append(s.filesByLanguage[file.Language], file)
+	}
+	for _, relation := range batch.Relations {
+		s.relationsByID[relation.ID] = relation
+		indexRelation(s.relationsByFrom, relation.Type, relation.FromSymbolID, relation)
+		indexRelation(s.relationsByTo, relation.Type, relation.ToSymbolID, relation)
+	}
+	for fileID := range s.symbolsByFile {
+		sortSymbols(s.symbolsByFile[fileID])
+	}
+	for kind := range s.symbolsByKind {
+		sortSymbols(s.symbolsByKind[kind])
+	}
+	for language := range s.filesByLanguage {
+		sort.Slice(s.filesByLanguage[language], func(i, j int) bool {
+			return s.filesByLanguage[language][i].Path < s.filesByLanguage[language][j].Path
+		})
+	}
+	for _, bySymbol := range s.relationsByFrom {
+		for symbolID := range bySymbol {
+			sortRelations(bySymbol[symbolID])
+		}
+	}
+	for _, bySymbol := range s.relationsByTo {
+		for symbolID := range bySymbol {
+			sortRelations(bySymbol[symbolID])
+		}
 	}
 	return s, nil
 }
@@ -52,11 +97,12 @@ func (s *Service) FindSymbol(projectID, query, kind string, limit int) ([]model.
 	limit = normalizeLimit(limit)
 	needle := strings.ToLower(strings.TrimSpace(query))
 	kind = strings.ToLower(strings.TrimSpace(kind))
+	candidates := s.batch.Symbols
+	if kind != "" {
+		candidates = s.symbolsByKind[kind]
+	}
 	results := make([]model.Symbol, 0)
-	for _, symbol := range s.batch.Symbols {
-		if kind != "" && strings.ToLower(symbol.Kind) != kind {
-			continue
-		}
+	for _, symbol := range candidates {
 		if needle != "" && !matchesSymbol(symbol, needle) {
 			continue
 		}
@@ -79,13 +125,11 @@ func (s *Service) GetSymbolDetail(projectID, symbolID string) (model.QuerySymbol
 	}
 	inbound := make([]model.Relation, 0)
 	outbound := make([]model.Relation, 0)
-	for _, relation := range s.batch.Relations {
-		if relation.ToSymbolID == symbolID {
-			inbound = append(inbound, relation)
-		}
-		if relation.FromSymbolID == symbolID {
-			outbound = append(outbound, relation)
-		}
+	for _, bySymbol := range s.relationsByTo {
+		inbound = append(inbound, bySymbol[symbolID]...)
+	}
+	for _, bySymbol := range s.relationsByFrom {
+		outbound = append(outbound, bySymbol[symbolID]...)
 	}
 	sortRelations(inbound)
 	sortRelations(outbound)
@@ -105,15 +149,7 @@ func (s *Service) FileDependencyGraph(projectID, filePath string, depth int) (mo
 		return model.FileDependencyGraph{}, false, err
 	}
 	depth = normalizeDepth(depth)
-	var root model.File
-	found := false
-	for _, file := range s.batch.Files {
-		if file.Path == filePath {
-			root = file
-			found = true
-			break
-		}
-	}
+	root, found := s.filesByPath[filePath]
 	if !found {
 		return model.FileDependencyGraph{}, false, nil
 	}
@@ -133,34 +169,54 @@ func (s *Service) FileDependencyGraph(projectID, filePath string, depth int) (mo
 		}
 		entry.Reasons = appendReason(entry.Reasons, reason)
 	}
-	for _, relation := range s.batch.Relations {
-		fromRoot := rootSet[relation.FromSymbolID]
-		toRoot := rootSet[relation.ToSymbolID]
-		if !fromRoot && !toRoot {
-			continue
+	seenRelated := make(map[string]struct{})
+	for _, symbol := range rootSymbols {
+		for _, bySymbol := range s.relationsByFrom {
+			for _, relation := range bySymbol[symbol.ID] {
+				if _, ok := rootSet[relation.FromSymbolID]; !ok {
+					continue
+				}
+				otherSymbol, ok := s.symbols[relation.ToSymbolID]
+				if !ok || otherSymbol.FileID == root.ID {
+					continue
+				}
+				otherFile, ok := s.files[otherSymbol.FileID]
+				if !ok {
+					continue
+				}
+				addDependency(depends, otherFile, &relation, relation.Type)
+				if _, ok := seenRelated[relation.ID]; !ok {
+					relatedRelations = append(relatedRelations, relation)
+					seenRelated[relation.ID] = struct{}{}
+				}
+			}
 		}
-		otherID := relation.ToSymbolID
-		target := depends
-		if toRoot {
-			otherID = relation.FromSymbolID
-			target = dependents
+		for _, bySymbol := range s.relationsByTo {
+			for _, relation := range bySymbol[symbol.ID] {
+				if _, ok := rootSet[relation.ToSymbolID]; !ok {
+					continue
+				}
+				otherSymbol, ok := s.symbols[relation.FromSymbolID]
+				if !ok || otherSymbol.FileID == root.ID {
+					continue
+				}
+				otherFile, ok := s.files[otherSymbol.FileID]
+				if !ok {
+					continue
+				}
+				addDependency(dependents, otherFile, &relation, relation.Type)
+				if _, ok := seenRelated[relation.ID]; !ok {
+					relatedRelations = append(relatedRelations, relation)
+					seenRelated[relation.ID] = struct{}{}
+				}
+			}
 		}
-		otherSymbol, ok := s.symbols[otherID]
-		if !ok || otherSymbol.FileID == root.ID {
-			continue
-		}
-		otherFile, ok := s.files[otherSymbol.FileID]
-		if !ok {
-			continue
-		}
-		addDependency(target, otherFile, &relation, relation.Type)
-		relatedRelations = append(relatedRelations, relation)
 	}
 	for _, symbol := range rootSymbols {
 		if symbol.Kind != "import" || symbol.Signature == "" {
 			continue
 		}
-		for _, file := range s.batch.Files {
+		for _, file := range s.filesByLanguage[root.Language] {
 			if file.ID == root.ID || file.Language != root.Language {
 				continue
 			}
@@ -238,20 +294,13 @@ func (s *Service) traverseCalls(projectID, symbolID string, depth int, direction
 	for level := 0; level < depth && len(frontier) > 0; level++ {
 		next := make([]string, 0)
 		for _, current := range frontier {
-			for _, relation := range s.batch.Relations {
-				if relation.Type != model.RelationCalls {
-					continue
-				}
+			for _, relation := range s.callRelations(current, direction) {
 				target := ""
 				switch direction {
 				case "callers":
-					if relation.ToSymbolID == current {
-						target = relation.FromSymbolID
-					}
+					target = relation.FromSymbolID
 				case "callees":
-					if relation.FromSymbolID == current {
-						target = relation.ToSymbolID
-					}
+					target = relation.ToSymbolID
 				}
 				if target == "" {
 					continue
@@ -273,8 +322,8 @@ func (s *Service) traverseCalls(projectID, symbolID string, depth int, direction
 		}
 	}
 	relations := make([]model.Relation, 0, len(seenRelations))
-	for _, relation := range s.batch.Relations {
-		if _, ok := seenRelations[relation.ID]; ok {
+	for id := range seenRelations {
+		if relation, ok := s.relationsByID[id]; ok {
 			relations = append(relations, relation)
 		}
 	}
@@ -284,14 +333,25 @@ func (s *Service) traverseCalls(projectID, symbolID string, depth int, direction
 }
 
 func (s *Service) symbolsForFile(fileID string) []model.Symbol {
-	symbols := make([]model.Symbol, 0)
-	for _, symbol := range s.batch.Symbols {
-		if symbol.FileID == fileID {
-			symbols = append(symbols, symbol)
-		}
+	return append([]model.Symbol(nil), s.symbolsByFile[fileID]...)
+}
+
+func (s *Service) callRelations(symbolID, direction string) []model.Relation {
+	switch direction {
+	case "callers":
+		return s.relationsByTo[model.RelationCalls][symbolID]
+	case "callees":
+		return s.relationsByFrom[model.RelationCalls][symbolID]
+	default:
+		return nil
 	}
-	sortSymbols(symbols)
-	return symbols
+}
+
+func indexRelation(index map[model.RelationType]map[string][]model.Relation, relationType model.RelationType, symbolID string, relation model.Relation) {
+	if index[relationType] == nil {
+		index[relationType] = make(map[string][]model.Relation)
+	}
+	index[relationType][symbolID] = append(index[relationType][symbolID], relation)
 }
 
 func normalizeLimit(limit int) int {
