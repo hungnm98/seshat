@@ -23,6 +23,7 @@ import (
 	mcpserver "github.com/hungnm98/seshat-cli/internal/mcp"
 	"github.com/hungnm98/seshat-cli/internal/parser"
 	goanalyzer "github.com/hungnm98/seshat-cli/internal/parser/golang"
+	jsanalyzer "github.com/hungnm98/seshat-cli/internal/parser/javascript"
 	rubyanalyzer "github.com/hungnm98/seshat-cli/internal/parser/ruby"
 	"github.com/hungnm98/seshat-cli/internal/setup"
 	"github.com/hungnm98/seshat-cli/internal/watch"
@@ -546,8 +547,10 @@ func loadConfigWithHash(configPath string) (config.CLIProjectConfig, string, err
 
 func analyzerMap() map[string]parser.Analyzer {
 	return map[string]parser.Analyzer{
-		"go":   goanalyzer.New(),
-		"ruby": rubyanalyzer.New(),
+		"go":         goanalyzer.New(),
+		"ruby":       rubyanalyzer.New(),
+		"javascript": jsanalyzer.NewJS(),
+		"typescript": jsanalyzer.NewTS(),
 	}
 }
 
@@ -573,6 +576,10 @@ func detectProject(repoPath string) ([]string, []string, error) {
 			languages["go"] = struct{}{}
 		case ".rb":
 			languages["ruby"] = struct{}{}
+		case ".js", ".jsx":
+			languages["javascript"] = struct{}{}
+		case ".ts", ".tsx":
+			languages["typescript"] = struct{}{}
 		}
 		first := strings.Split(filepath.ToSlash(rel), "/")[0]
 		if first != "." && first != "" {
@@ -673,6 +680,12 @@ func indexableChangedFiles(files []string, cfg config.CLIProjectConfig) []string
 			allowedExt[".go"] = struct{}{}
 		case "ruby":
 			allowedExt[".rb"] = struct{}{}
+		case "javascript":
+			allowedExt[".js"] = struct{}{}
+			allowedExt[".jsx"] = struct{}{}
+		case "typescript":
+			allowedExt[".ts"] = struct{}{}
+			allowedExt[".tsx"] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(files))
