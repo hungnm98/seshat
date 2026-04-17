@@ -135,22 +135,42 @@ func runIngest(args []string, stdout, stderr io.Writer) error {
 	all := fs.Bool("all", false, "Enable all local analysis features currently supported")
 	dryRun := fs.Bool("dry-run", false, "Parse and print output without writing local index")
 	jsonOut := fs.Bool("json", false, "Print JSON output")
+	parallelism := fs.Int("parallel", 1, "Number of files to parse concurrently")
+	threads := fs.Int("threads", 0, "Alias for --parallel")
+	verbose := false
+	fs.BoolVar(&verbose, "v", false, "Print verbose ingest logs")
+	fs.BoolVar(&verbose, "verbose", false, "Print verbose ingest logs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	_ = all
-	batch, cfg, configHash, err := buildBatch(*configPath, "full", nil)
+	if *threads > 0 {
+		*parallelism = *threads
+	}
+	if *parallelism < 1 {
+		return fmt.Errorf("parallel must be >= 1")
+	}
+	fmt.Fprintf(stderr, "ingest: scanning repository from %s with parallel=%d\n", *configPath, *parallelism)
+	batch, cfg, configHash, err := buildBatchWithOptions(*configPath, "full", nil, buildOptions{
+		Parallelism: *parallelism,
+		Verbose:     verbose,
+		Log:         stderr,
+	})
 	if err != nil {
 		return err
 	}
 	summary := localindex.Summarize(batch)
+	fmt.Fprintf(stderr, "ingest: analyzed %d files, %d symbols, %d relations\n", summary.FilesCount, summary.SymbolsCount, summary.RelationsCount)
 	if !*dryRun {
+		fmt.Fprintf(stderr, "ingest: writing graph index\n")
 		if err := localindex.WriteGraph(*configPath, batch); err != nil {
 			return err
 		}
+		fmt.Fprintf(stderr, "ingest: writing status index\n")
 		if err := localindex.WriteStatus(*configPath, localindex.BuildStatus(*configPath, cfg.RepoPath, configHash, batch)); err != nil {
 			return err
 		}
+		fmt.Fprintf(stderr, "ingest: index updated\n")
 	}
 	if *jsonOut {
 		return printJSON(stdout, batch)
@@ -324,15 +344,41 @@ func runMCP(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	batch, err := localindex.ReadGraph(*configPath)
-	if err != nil {
-		return err
+	provider := &reloadingQueryProvider{
+		configPath: filepath.Clean(*configPath),
+		projectID:  cfg.ProjectID,
 	}
-	query, err := localquery.New(cfg.ProjectID, batch)
+	return mcpserver.NewServerWithProvider(provider.Query).Serve(stdin, stdout)
+}
+
+type reloadingQueryProvider struct {
+	configPath string
+	projectID  string
+	modTime    time.Time
+	size       int64
+	query      *localquery.Service
+}
+
+func (p *reloadingQueryProvider) Query() (*localquery.Service, error) {
+	info, err := os.Stat(localindex.GraphPath(p.configPath))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return mcpserver.NewServer(query).Serve(stdin, stdout)
+	if p.query != nil && info.Size() == p.size && info.ModTime().Equal(p.modTime) {
+		return p.query, nil
+	}
+	batch, err := localindex.ReadGraph(p.configPath)
+	if err != nil {
+		return nil, err
+	}
+	query, err := localquery.New(p.projectID, batch)
+	if err != nil {
+		return nil, err
+	}
+	p.query = query
+	p.modTime = info.ModTime()
+	p.size = info.Size()
+	return p.query, nil
 }
 
 func runGraph(args []string, stdout, stderr io.Writer) error {
@@ -411,7 +457,17 @@ func runSetup(args []string, stdout io.Writer) error {
 	return nil
 }
 
+type buildOptions struct {
+	Parallelism int
+	Verbose     bool
+	Log         io.Writer
+}
+
 func buildBatch(configPath, mode string, targetFiles []string) (model.AnalysisBatch, config.CLIProjectConfig, string, error) {
+	return buildBatchWithOptions(configPath, mode, targetFiles, buildOptions{})
+}
+
+func buildBatchWithOptions(configPath, mode string, targetFiles []string, opts buildOptions) (model.AnalysisBatch, config.CLIProjectConfig, string, error) {
 	cfg, configHash, err := loadConfigWithHash(configPath)
 	if err != nil {
 		return model.AnalysisBatch{}, config.CLIProjectConfig{}, "", err
@@ -422,6 +478,17 @@ func buildBatch(configPath, mode string, targetFiles []string) (model.AnalysisBa
 	}
 	commitSHA := gitValue(cfg.RepoPath, "rev-parse", "HEAD")
 	branch := gitValue(cfg.RepoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	parallelism := opts.Parallelism
+	if parallelism <= 0 {
+		parallelism = 1
+	}
+	if opts.Verbose && opts.Log != nil {
+		fmt.Fprintf(opts.Log, "ingest: repo=%s\n", cfg.RepoPath)
+		fmt.Fprintf(opts.Log, "ingest: targets=%s mode=%s commit=%s branch=%s parallel=%d\n", strings.Join(cfg.LanguageTargets, ","), mode, commitSHA, branch, parallelism)
+		if len(targetFiles) > 0 {
+			fmt.Fprintf(opts.Log, "ingest: changed files=%d\n", len(targetFiles))
+		}
+	}
 	input := parser.Input{
 		ProjectID:     cfg.ProjectID,
 		RepoPath:      cfg.RepoPath,
@@ -432,14 +499,29 @@ func buildBatch(configPath, mode string, targetFiles []string) (model.AnalysisBa
 		Branch:        branch,
 		SchemaVersion: graphschema.Version,
 		ScanMode:      mode,
+		Parallelism:   parallelism,
 	}
 	var batches []model.AnalysisBatch
 	for _, target := range cfg.LanguageTargets {
+		start := time.Now()
+		if opts.Verbose && opts.Log != nil {
+			fmt.Fprintf(opts.Log, "ingest: analyzing target=%s\n", target)
+		}
 		batch, err := analyzers[target].Analyze(context.Background(), input)
 		if err != nil {
+			if opts.Log != nil {
+				fmt.Fprintf(opts.Log, "ingest: target=%s failed: %v\n", target, err)
+			}
 			return model.AnalysisBatch{}, config.CLIProjectConfig{}, "", err
 		}
+		if opts.Verbose && opts.Log != nil {
+			summary := localindex.Summarize(batch)
+			fmt.Fprintf(opts.Log, "ingest: target=%s done in %s (%d files, %d symbols, %d relations)\n", target, time.Since(start).Round(time.Millisecond), summary.FilesCount, summary.SymbolsCount, summary.RelationsCount)
+		}
 		batches = append(batches, batch)
+	}
+	if opts.Verbose && opts.Log != nil {
+		fmt.Fprintf(opts.Log, "ingest: merging %d analysis batches\n", len(batches))
 	}
 	return parser.MergeBatches(cfg.ProjectID, commitSHA, branch, graphschema.Version, mode, batches...), cfg, configHash, nil
 }
@@ -664,7 +746,7 @@ func gitValue(repo string, args ...string) string {
 func usage(out io.Writer) {
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  seshat init [--config .seshat/project.yaml]")
-	fmt.Fprintln(out, "  seshat ingest [--config .seshat/project.yaml] [--dry-run] [--json]")
+	fmt.Fprintln(out, "  seshat ingest [--config .seshat/project.yaml] [--parallel 1] [-v] [--dry-run] [--json]")
 	fmt.Fprintln(out, "  seshat push [--config .seshat/project.yaml] [--force]")
 	fmt.Fprintln(out, "  seshat watch [--config .seshat/project.yaml] [--debounce 2000]")
 	fmt.Fprintln(out, "  seshat inspect [--config .seshat/project.yaml] [--json]")
