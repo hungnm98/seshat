@@ -384,7 +384,7 @@ func runGraph(args []string, stdout, stderr io.Writer) error {
 func runSetup(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
-	client := fs.String("client", "all", "Client to configure: cursor, codex, all")
+	client := fs.String("client", "all", "Client to configure: cursor, codex, claude, all")
 	printOnly := fs.Bool("print", true, "Print config snippets")
 	binaryPath := fs.String("binary", "seshat", "Seshat CLI command or absolute binary path")
 	if err := fs.Parse(args); err != nil {
@@ -394,7 +394,11 @@ func runSetup(args []string, stdout io.Writer) error {
 	if abs, absErr := filepath.Abs(*configPath); absErr == nil {
 		setupConfigPath = abs
 	}
-	snippets, err := setup.Generate(setup.Client(*client), *binaryPath, setupConfigPath)
+	var projectID string
+	if cfg, _, err := loadConfigWithHash(*configPath); err == nil {
+		projectID = cfg.ProjectID
+	}
+	snippets, err := setup.Generate(setup.Client(*client), *binaryPath, setupConfigPath, projectID)
 	if err != nil {
 		return err
 	}
@@ -667,7 +671,7 @@ func usage(out io.Writer) {
 	fmt.Fprintln(out, "  seshat status [--config .seshat/project.yaml] [--json]")
 	fmt.Fprintln(out, "  seshat mcp [--config .seshat/project.yaml]")
 	fmt.Fprintln(out, "  seshat graph --file path/to/file.go [--format mermaid|dot|json]")
-	fmt.Fprintln(out, "  seshat setup [--client cursor|codex|all] [--print]")
+	fmt.Fprintln(out, "  seshat setup [--client cursor|codex|claude|all] [--print]")
 }
 
 func discoverChangedFiles(repoPath string) ([]string, error) {
