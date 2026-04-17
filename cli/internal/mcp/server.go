@@ -14,11 +14,17 @@ import (
 const protocolVersion = "2025-06-18"
 
 type Server struct {
-	query *localquery.Service
+	queryProvider func() (*localquery.Service, error)
 }
 
 func NewServer(query *localquery.Service) *Server {
-	return &Server{query: query}
+	return NewServerWithProvider(func() (*localquery.Service, error) {
+		return query, nil
+	})
+}
+
+func NewServerWithProvider(provider func() (*localquery.Service, error)) *Server {
+	return &Server{queryProvider: provider}
 }
 
 func (s *Server) Serve(in io.Reader, out io.Writer) error {
@@ -138,6 +144,10 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
+	queryService, err := s.queryProvider()
+	if err != nil {
+		return nil, "", err
+	}
 	switch name {
 	case "find_symbol":
 		query, err := stringArg(args, "query", true)
@@ -146,7 +156,7 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 		}
 		kind, _ := stringArg(args, "kind", false)
 		limit := intArg(args, "limit", localquery.DefaultLimit)
-		results, version, err := s.query.FindSymbol(projectID, query, kind, limit)
+		results, version, err := queryService.FindSymbol(projectID, query, kind, limit)
 		if err != nil {
 			return nil, "", err
 		}
@@ -156,7 +166,7 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 		if err != nil {
 			return nil, "", err
 		}
-		result, ok, err := s.query.GetSymbolDetail(projectID, symbolID)
+		result, ok, err := queryService.GetSymbolDetail(projectID, symbolID)
 		if err != nil {
 			return nil, "", err
 		}
@@ -169,7 +179,7 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 		if err != nil {
 			return nil, "", err
 		}
-		results, relations, version, err := s.query.FindCallers(projectID, symbolID, intArg(args, "depth", localquery.DefaultDepth))
+		results, relations, version, err := queryService.FindCallers(projectID, symbolID, intArg(args, "depth", localquery.DefaultDepth))
 		if err != nil {
 			return nil, "", err
 		}
@@ -179,7 +189,7 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 		if err != nil {
 			return nil, "", err
 		}
-		results, relations, version, err := s.query.FindCallees(projectID, symbolID, intArg(args, "depth", localquery.DefaultDepth))
+		results, relations, version, err := queryService.FindCallees(projectID, symbolID, intArg(args, "depth", localquery.DefaultDepth))
 		if err != nil {
 			return nil, "", err
 		}
@@ -189,7 +199,7 @@ func (s *Server) execute(name string, args map[string]any) (any, string, error) 
 		if err != nil {
 			return nil, "", err
 		}
-		graph, ok, err := s.query.FileDependencyGraph(projectID, filePath, intArg(args, "depth", localquery.DefaultDepth))
+		graph, ok, err := queryService.FileDependencyGraph(projectID, filePath, intArg(args, "depth", localquery.DefaultDepth))
 		if err != nil {
 			return nil, "", err
 		}

@@ -63,6 +63,38 @@ func TestServerRejectsUnknownMethod(t *testing.T) {
 	}
 }
 
+func TestServerUsesLatestQueryProvider(t *testing.T) {
+	oldQuery := testQuery(t, "RunBefore")
+	newQuery := testQuery(t, "RunAfterReload")
+	calls := 0
+	server := NewServerWithProvider(func() (*localquery.Service, error) {
+		calls++
+		if calls == 1 {
+			return oldQuery, nil
+		}
+		return newQuery, nil
+	})
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find_symbol","arguments":{"project_id":"proj","query":"RunBefore"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_symbol","arguments":{"project_id":"proj","query":"RunAfterReload"}}}`,
+	}, "\n") + "\n"
+	var out bytes.Buffer
+
+	if err := server.Serve(strings.NewReader(input), &out); err != nil {
+		t.Fatalf("Serve returned error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 responses, got %d: %s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], "RunBefore") {
+		t.Fatalf("expected first response from old query, got %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "RunAfterReload") {
+		t.Fatalf("expected second response from reloaded query, got %s", lines[1])
+	}
+}
+
 func TestTrimGraphLimitsDirectionAndCompactsByDefault(t *testing.T) {
 	graph := model.FileDependencyGraph{
 		File:    model.File{Path: "controllers/order/place_order.go"},
@@ -96,4 +128,16 @@ func TestTrimGraphLimitsDirectionAndCompactsByDefault(t *testing.T) {
 	if trimmed.DependsOn[0].Symbols != nil || trimmed.DependsOn[0].Relations != nil {
 		t.Fatalf("expected compact dependency, got %#v", trimmed.DependsOn[0])
 	}
+}
+
+func testQuery(t *testing.T, name string) *localquery.Service {
+	t.Helper()
+	query, err := localquery.New("proj", model.AnalysisBatch{
+		Metadata: model.GraphMetadata{ProjectID: "proj"},
+		Symbols:  []model.Symbol{{ID: "symbol:go:main:func:" + name, Kind: "function", Name: name, Path: "main.go"}},
+	})
+	if err != nil {
+		t.Fatalf("localquery.New returned error: %v", err)
+	}
+	return query
 }
