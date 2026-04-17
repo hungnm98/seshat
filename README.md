@@ -1,6 +1,6 @@
 # Seshat
 
-Seshat is a Go-based code knowledge graph and AI context engine. The current V1 workflow is CLI-first: parse a repository locally, store a JSON graph index, and expose that index through a local MCP stdio server for Codex, Cursor, and other MCP clients.
+Seshat is a Go-based code knowledge graph and AI context engine. The current V1 workflow is CLI-first: parse a repository locally, store a JSON graph index, and expose that index through a local MCP stdio server for Codex, Cursor, Claude, and other MCP clients.
 
 - `cli/` for local scanning, parsing, JSON indexing, MCP, and agent-facing queries
 - `server/` for later ingestion, query APIs, admin UI, token auth, worker jobs, and MCP gateway work
@@ -14,7 +14,7 @@ Run the local-only flow from the repository you want to index:
 ```bash
 cd cli
 go run ./cmd/seshat init --repo .. --config ../.seshat/project.yaml --project-id seshat
-go run ./cmd/seshat ingest --config ../.seshat/project.yaml
+go run ./cmd/seshat ingest --config ../.seshat/project.yaml --parallel 1
 go run ./cmd/seshat status --config ../.seshat/project.yaml
 go run ./cmd/seshat inspect --config ../.seshat/project.yaml --json
 go run ./cmd/seshat graph --config ../.seshat/project.yaml --file cli/cmd/seshat/main.go --format mermaid
@@ -62,14 +62,17 @@ go run ./cmd/seshat watch --config ../.seshat/project.yaml --debounce 2000
 go test ./cli/...
 go test ./server/...
 
+./scripts/build-local.sh
+./scripts/build-local.sh /tmp/seshat
+
 cd cli
 go run ./cmd/seshat init --repo .. --config ../.seshat/project.yaml
-go run ./cmd/seshat ingest --config ../.seshat/project.yaml
+go run ./cmd/seshat ingest --config ../.seshat/project.yaml --parallel 4 -v
 go run ./cmd/seshat push --config ../.seshat/project.yaml
 go run ./cmd/seshat inspect --config ../.seshat/project.yaml --json
 go run ./cmd/seshat status --config ../.seshat/project.yaml --json
 go run ./cmd/seshat graph --config ../.seshat/project.yaml --file cli/cmd/seshat/main.go --format mermaid
-go run ./cmd/seshat setup --config ../.seshat/project.yaml --client cursor --print
+go run ./cmd/seshat setup --config ../.seshat/project.yaml --client claude --print
 ```
 
 ## Project Layout
