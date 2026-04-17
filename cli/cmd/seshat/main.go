@@ -45,11 +45,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "init":
 		return runInit(args[1:], stdout, stderr)
+	case "scan", "c":
+		return runScan(args[1:], stdout, stderr)
 	case "ingest":
-		return runIngest(args[1:], stdout, stderr)
-	case "scan":
-		fmt.Fprintln(stderr, "`scan` is deprecated in CLI-first mode; use `ingest` instead.")
-		return runIngest(args[1:], stdout, stderr)
+		fmt.Fprintln(stderr, "`ingest` is deprecated; use `scan` instead.")
+		return runScan(args[1:], stdout, stderr)
 	case "push":
 		return runPush(args[1:], stdout, stderr)
 	case "watch":
@@ -128,14 +128,15 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runIngest(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
+func runScan(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
 	all := fs.Bool("all", false, "Enable all local analysis features currently supported")
 	dryRun := fs.Bool("dry-run", false, "Parse and print output without writing local index")
 	jsonOut := fs.Bool("json", false, "Print JSON output")
 	parallelism := fs.Int("parallel", 1, "Number of files to parse concurrently")
+	fs.IntVar(parallelism, "p", 1, "Number of files to parse concurrently (shorthand)")
 	threads := fs.Int("threads", 0, "Alias for --parallel")
 	verbose := false
 	fs.BoolVar(&verbose, "v", false, "Print verbose ingest logs")
@@ -175,7 +176,7 @@ func runIngest(args []string, stdout, stderr io.Writer) error {
 	if *jsonOut {
 		return printJSON(stdout, batch)
 	}
-	printSummary(stdout, "ingest", summary, *dryRun)
+	printSummary(stdout, "scan", summary, *dryRun)
 	return nil
 }
 
@@ -413,7 +414,7 @@ func runGraph(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("file %s not found in local index; run `seshat ingest` first if the index is stale", *filePath)
+		return fmt.Errorf("file %s not found in local index; run `seshat scan` first if the index is stale", *filePath)
 	}
 	output, err := graphrender.Render(graph, graphrender.Options{
 		Format:    graphrender.Format(*format),
@@ -746,7 +747,7 @@ func gitValue(repo string, args ...string) string {
 func usage(out io.Writer) {
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  seshat init [--config .seshat/project.yaml]")
-	fmt.Fprintln(out, "  seshat ingest [--config .seshat/project.yaml] [--parallel 1] [-v] [--dry-run] [--json]")
+	fmt.Fprintln(out, "  seshat scan|c [--config .seshat/project.yaml] [--parallel|-p 1] [-v] [--dry-run] [--json]")
 	fmt.Fprintln(out, "  seshat push [--config .seshat/project.yaml] [--force]")
 	fmt.Fprintln(out, "  seshat watch [--config .seshat/project.yaml] [--debounce 2000]")
 	fmt.Fprintln(out, "  seshat inspect [--config .seshat/project.yaml] [--json]")
@@ -877,6 +878,3 @@ func runDependencies(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runScan(args []string) error {
-	return runIngest(args, os.Stdout, os.Stderr)
-}
