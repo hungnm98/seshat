@@ -1,3 +1,20 @@
+# Codebase
+
+Use the `seshat-{project-id}` MCP server for all codebase analysis.
+
+Mandatory:
+- Use seshat tools for symbol lookup, file exploration, and dependency analysis
+- Retrieve `project-id` from `.seshat/project.yaml`
+
+If the codebase changes significantly:
+- Execute: `seshat scan`
+- Ensure the graph is rebuilt before any further analysis
+
+Avoid:
+- Guessing code structure
+- Skipping seshat tools when available
+
+
 # Workspace Instructions
 
 This repository defines the Seshat workflow for Vikunja-managed tasks.
