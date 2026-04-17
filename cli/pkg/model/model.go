@@ -11,6 +11,7 @@ const (
 	RelationCalls      RelationType = "calls"
 	RelationReferences RelationType = "references"
 	RelationImplements RelationType = "implements"
+	RelationInherits   RelationType = "inherits"
 )
 
 type GraphMetadata struct {
