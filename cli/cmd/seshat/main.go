@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hungnm98/seshat-cli/internal/config"
@@ -51,10 +52,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "ingest":
 		fmt.Fprintln(stderr, "`ingest` is deprecated; use `scan` instead.")
 		return runScan(args[1:], stdout, stderr)
-	case "push":
-		return runPush(args[1:], stdout, stderr)
-	case "watch":
-		return runWatch(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout)
 	case "status":
@@ -181,102 +178,6 @@ func runScan(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runPush(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("push", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
-	force := fs.Bool("force", false, "Re-index the full repository")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *force {
-		batch, cfg, configHash, err := buildBatch(*configPath, "full", nil)
-		if err != nil {
-			return err
-		}
-		if err := localindex.WriteGraph(*configPath, batch); err != nil {
-			return err
-		}
-		if err := localindex.WriteStatus(*configPath, localindex.BuildStatus(*configPath, cfg.RepoPath, configHash, batch)); err != nil {
-			return err
-		}
-		printSummary(stdout, "push --force", localindex.Summarize(batch), false)
-		return nil
-	}
-	cfg, configHash, err := loadConfigWithHash(*configPath)
-	if err != nil {
-		return err
-	}
-	changed, err := discoverChangedFiles(cfg.RepoPath)
-	if err != nil {
-		return err
-	}
-	changed = indexableChangedFiles(changed, cfg)
-	if len(changed) == 0 {
-		fmt.Fprintln(stdout, "no changed source files detected; local index unchanged")
-		return nil
-	}
-	current, err := localindex.ReadGraph(*configPath)
-	if err != nil {
-		return err
-	}
-	delta, _, _, err := buildBatch(*configPath, "incremental", changed)
-	if err != nil {
-		return err
-	}
-	merged := mergeIncremental(current, delta, changed)
-	if err := localindex.WriteGraph(*configPath, merged); err != nil {
-		return err
-	}
-	if err := localindex.WriteStatus(*configPath, localindex.BuildStatus(*configPath, cfg.RepoPath, configHash, merged)); err != nil {
-		return err
-	}
-	printSummary(stdout, "push", localindex.Summarize(merged), false)
-	return nil
-}
-
-func runWatch(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
-	debounceMS := fs.Int("debounce", 2000, "Polling/debounce interval in milliseconds")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	cfg, _, err := loadConfigWithHash(*configPath)
-	if err != nil {
-		return err
-	}
-	interval := time.Duration(*debounceMS) * time.Millisecond
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
-	previous, err := watch.SnapshotFiles(cfg.RepoPath, cfg.IncludePaths, cfg.ExcludePaths)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "watching %s every %s; press Ctrl+C to stop\n", cfg.RepoPath, interval)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for range ticker.C {
-		next, err := watch.SnapshotFiles(cfg.RepoPath, cfg.IncludePaths, cfg.ExcludePaths)
-		if err != nil {
-			fmt.Fprintf(stderr, "watch snapshot failed: %v\n", err)
-			continue
-		}
-		changed := watch.Changed(previous, next)
-		if len(changed) == 0 {
-			continue
-		}
-		if err := runPush([]string{"--config", *configPath}, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "push failed: %v\n", err)
-		} else {
-			previous = next
-		}
-	}
-	return nil
-}
-
 func runInspect(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
@@ -338,36 +239,462 @@ func runStatus(args []string, stdout io.Writer) error {
 }
 
 func runMCP(args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "add":
+			return runMCPAdd(args[1:], stdout)
+		case "reload":
+			return runMCPReload(args[1:], stdout)
+		case "project":
+			return runMCPProject(args[1:], stdout)
+		case "config":
+			return runMCPConfig(args[1:], stdout)
+		case "-h", "--help":
+			mcpUsage(stdout)
+			return nil
+		}
+	}
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
+	registryPath := fs.String("registry", defaultMCPRegistryPath(), "Path to multi-project MCP registry")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, _, err := loadConfigWithHash(*configPath)
+	if fs.NArg() > 0 {
+		mcpUsage(stdout)
+		return fmt.Errorf("unknown mcp command or argument %q", fs.Arg(0))
+	}
+	provider := newRegistryQueryProvider(*registryPath)
+	return mcpserver.NewServerWithProjectProviderAndLister(provider.Query, provider.ListProjects).Serve(stdin, stdout)
+}
+
+const (
+	defaultMCPRegistryName = "config.yml"
+	defaultCacheIdleTTL    = 30 * time.Minute
+)
+
+type mcpRegistryConfig struct {
+	Cache    mcpCacheConfig `yaml:"cache"`
+	Projects []mcpProject   `yaml:"projects"`
+}
+
+type mcpCacheConfig struct {
+	IdleTTL string `yaml:"idle_ttl"`
+}
+
+type mcpProject struct {
+	ID     string `yaml:"id"`
+	Path   string `yaml:"path"`
+	Config string `yaml:"config"`
+}
+
+func runMCPAdd(args []string, stdout io.Writer) error {
+	registryPath, reload, rest, err := parseMCPAddArgs(args)
 	if err != nil {
 		return err
 	}
-	provider := &reloadingQueryProvider{
-		configPath: filepath.Clean(*configPath),
-		projectID:  cfg.ProjectID,
+	if len(rest) != 1 {
+		return errors.New("usage: seshat mcp add {folder_project} [--registry ~/.seshat/config.yml] [--reload]")
 	}
-	return mcpserver.NewServerWithProvider(provider.Query).Serve(stdin, stdout)
+	projectDir, err := filepath.Abs(rest[0])
+	if err != nil {
+		return err
+	}
+	projectConfig := filepath.Join(projectDir, ".seshat", "project.yaml")
+	cfg, _, err := loadConfigWithHash(projectConfig)
+	if err != nil {
+		return err
+	}
+	registry, err := loadMCPRegistry(registryPath)
+	if err != nil {
+		return err
+	}
+	project := mcpProject{ID: cfg.ProjectID, Path: filepath.Clean(projectDir), Config: filepath.Clean(projectConfig)}
+	registry.Projects = upsertMCPProject(registry.Projects, project)
+	if err := writeMCPRegistry(registryPath, registry); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "added project %s %s\n", project.ID, project.Path)
+	if reload {
+		fmt.Fprintln(stdout, lazyReloadMessage())
+	}
+	return nil
+}
+
+func runMCPReload(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mcp reload", flag.ContinueOnError)
+	registryPath := fs.String("registry", defaultMCPRegistryPath(), "Path to multi-project MCP registry")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if _, err := loadMCPRegistry(*registryPath); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, lazyReloadMessage())
+	return nil
+}
+
+func lazyReloadMessage() string {
+	return "registry is valid; each stdio MCP process lazily reloads registry and graph files on its next tool call"
+}
+
+func runMCPProject(args []string, stdout io.Writer) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		mcpProjectUsage(stdout)
+		return nil
+	}
+	switch args[0] {
+	case "ls", "list":
+		fs := flag.NewFlagSet("mcp project ls", flag.ContinueOnError)
+		registryPath := fs.String("registry", defaultMCPRegistryPath(), "Path to multi-project MCP registry")
+		jsonOut := fs.Bool("json", false, "Print JSON output")
+		sortBy := fs.String("sort", "id", "Sort by id or path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		registry, err := loadMCPRegistry(*registryPath)
+		if err != nil {
+			return err
+		}
+		sortMCPProjects(registry.Projects, *sortBy)
+		if *jsonOut {
+			return printJSON(stdout, registry.Projects)
+		}
+		for _, project := range registry.Projects {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\n", project.ID, project.Path, project.Config)
+		}
+		return nil
+	default:
+		mcpProjectUsage(stdout)
+		return fmt.Errorf("unknown mcp project command %q", args[0])
+	}
+}
+
+func runMCPConfig(args []string, stdout io.Writer) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		mcpConfigUsage(stdout)
+		return nil
+	}
+	fs := flag.NewFlagSet("mcp config "+args[0], flag.ContinueOnError)
+	registryPath := fs.String("registry", defaultMCPRegistryPath(), "Path to multi-project MCP registry")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	path := filepath.Clean(expandHome(*registryPath))
+	switch args[0] {
+	case "path":
+		fmt.Fprintln(stdout, path)
+		return nil
+	case "show":
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, string(data))
+		return nil
+	case "edit":
+		editor := os.Getenv("VISUAL")
+		if editor == "" {
+			editor = os.Getenv("EDITOR")
+		}
+		if editor == "" {
+			return fmt.Errorf("VISUAL or EDITOR is required to edit %s", path)
+		}
+		cmd := execCommand(editor, path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	default:
+		mcpConfigUsage(stdout)
+		return fmt.Errorf("unknown mcp config command %q", args[0])
+	}
+}
+
+func parseMCPAddArgs(args []string) (string, bool, []string, error) {
+	registryPath := defaultMCPRegistryPath()
+	reload := false
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--reload":
+			reload = true
+		case arg == "--registry":
+			if i+1 >= len(args) {
+				return "", false, nil, errors.New("--registry requires a path")
+			}
+			i++
+			registryPath = args[i]
+		case strings.HasPrefix(arg, "--registry="):
+			registryPath = strings.TrimPrefix(arg, "--registry=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	return registryPath, reload, rest, nil
+}
+
+func loadMCPRegistry(path string) (mcpRegistryConfig, error) {
+	path = filepath.Clean(expandHome(path))
+	registry := mcpRegistryConfig{Cache: mcpCacheConfig{IdleTTL: defaultCacheIdleTTL.String()}}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return registry, nil
+		}
+		return mcpRegistryConfig{}, fmt.Errorf("read mcp registry: %w", err)
+	}
+	if err := yaml.Unmarshal(data, &registry); err != nil {
+		return mcpRegistryConfig{}, fmt.Errorf("parse mcp registry: %w", err)
+	}
+	if registry.Cache.IdleTTL == "" {
+		registry.Cache.IdleTTL = defaultCacheIdleTTL.String()
+	}
+	if _, err := parseCacheIdleTTL(registry.Cache.IdleTTL); err != nil {
+		return mcpRegistryConfig{}, err
+	}
+	seen := make(map[string]string, len(registry.Projects))
+	for i := range registry.Projects {
+		registry.Projects[i].Path = filepath.Clean(expandHome(registry.Projects[i].Path))
+		registry.Projects[i].Config = filepath.Clean(expandHome(registry.Projects[i].Config))
+		if registry.Projects[i].ID == "" {
+			return mcpRegistryConfig{}, fmt.Errorf("project id is required in %s", path)
+		}
+		if registry.Projects[i].Config == "" {
+			return mcpRegistryConfig{}, fmt.Errorf("project %s config is required in %s", registry.Projects[i].ID, path)
+		}
+		if previous, exists := seen[registry.Projects[i].ID]; exists {
+			return mcpRegistryConfig{}, fmt.Errorf("duplicate project id %q in %s (%s and %s)", registry.Projects[i].ID, path, previous, registry.Projects[i].Config)
+		}
+		seen[registry.Projects[i].ID] = registry.Projects[i].Config
+	}
+	sortMCPProjects(registry.Projects, "id")
+	return registry, nil
+}
+
+func writeMCPRegistry(path string, registry mcpRegistryConfig) error {
+	path = filepath.Clean(expandHome(path))
+	if registry.Cache.IdleTTL == "" {
+		registry.Cache.IdleTTL = defaultCacheIdleTTL.String()
+	}
+	sortMCPProjects(registry.Projects, "id")
+	data, err := yaml.Marshal(registry)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func parseCacheIdleTTL(raw string) (time.Duration, error) {
+	ttl, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("cache.idle_ttl must be a Go duration such as 30m or 1h: %w", err)
+	}
+	if ttl < 0 {
+		return 0, fmt.Errorf("cache.idle_ttl must be >= 0")
+	}
+	return ttl, nil
+}
+
+func upsertMCPProject(projects []mcpProject, project mcpProject) []mcpProject {
+	out := append([]mcpProject(nil), projects...)
+	for i, existing := range out {
+		if existing.ID == project.ID {
+			out[i] = project
+			sortMCPProjects(out, "id")
+			return out
+		}
+	}
+	out = append(out, project)
+	sortMCPProjects(out, "id")
+	return out
+}
+
+func sortMCPProjects(projects []mcpProject, sortBy string) {
+	sort.Slice(projects, func(i, j int) bool {
+		switch sortBy {
+		case "path":
+			if projects[i].Path == projects[j].Path {
+				return projects[i].ID < projects[j].ID
+			}
+			return projects[i].Path < projects[j].Path
+		default:
+			if projects[i].ID == projects[j].ID {
+				return projects[i].Path < projects[j].Path
+			}
+			return projects[i].ID < projects[j].ID
+		}
+	})
+}
+
+func defaultMCPRegistryPath() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".seshat", defaultMCPRegistryName)
+	}
+	return filepath.Join(".seshat", defaultMCPRegistryName)
+}
+
+func expandHome(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+type registryQueryProvider struct {
+	registryPath string
+	mu           sync.Mutex
+	modTime      time.Time
+	size         int64
+	idleTTL      time.Duration
+	projects     []mcpProject
+	providers    map[string]*reloadingQueryProvider
+}
+
+func newRegistryQueryProvider(registryPath string) *registryQueryProvider {
+	return &registryQueryProvider{registryPath: filepath.Clean(expandHome(registryPath))}
+}
+
+func (p *registryQueryProvider) Query(projectID string) (*localquery.Service, error) {
+	p.mu.Lock()
+	if err := p.reloadIfChanged(); err != nil {
+		p.mu.Unlock()
+		return nil, err
+	}
+	p.evictIdle(time.Now())
+	provider := p.providers[projectID]
+	if provider == nil {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("project %q is not registered; call list_projects for available project_id values", projectID)
+	}
+	p.mu.Unlock()
+	return provider.Query()
+}
+
+func (p *registryQueryProvider) ListProjects() ([]mcpserver.ProjectInfo, error) {
+	p.mu.Lock()
+	if err := p.reloadIfChanged(); err != nil {
+		p.mu.Unlock()
+		return nil, err
+	}
+	registryProjects := append([]mcpProject(nil), p.projects...)
+	p.mu.Unlock()
+
+	projects := make([]mcpserver.ProjectInfo, 0, len(registryProjects))
+	for _, project := range registryProjects {
+		cfg, err := config.LoadCLIProject(project.Config)
+		if err != nil {
+			projects = append(projects, mcpserver.ProjectInfo{
+				ProjectID: project.ID,
+				Path:      project.Path,
+				Config:    project.Config,
+				Status:    "invalid",
+				Hint:      err.Error(),
+			})
+			continue
+		}
+		if cfg.ProjectID == "" {
+			cfg.ProjectID = project.ID
+		}
+		projects = append(projects, projectInfoFromConfig(project.Config, cfg))
+	}
+	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
+	return projects, nil
+}
+
+func (p *registryQueryProvider) reloadIfChanged() error {
+	info, err := os.Stat(p.registryPath)
+	if err != nil {
+		return err
+	}
+	if p.providers != nil && info.Size() == p.size && info.ModTime().Equal(p.modTime) {
+		return nil
+	}
+	registry, err := loadMCPRegistry(p.registryPath)
+	if err != nil {
+		return err
+	}
+	idleTTL, err := parseCacheIdleTTL(registry.Cache.IdleTTL)
+	if err != nil {
+		return err
+	}
+	providers := make(map[string]*reloadingQueryProvider, len(registry.Projects))
+	for _, project := range registry.Projects {
+		existing := p.providers[project.ID]
+		if existing != nil && existing.configPath == project.Config {
+			providers[project.ID] = existing
+			continue
+		}
+		providers[project.ID] = &reloadingQueryProvider{configPath: project.Config, projectID: project.ID}
+	}
+	p.projects = registry.Projects
+	p.providers = providers
+	p.idleTTL = idleTTL
+	p.modTime = info.ModTime()
+	p.size = info.Size()
+	return nil
+}
+
+func (p *registryQueryProvider) evictIdle(now time.Time) {
+	if p.idleTTL == 0 {
+		return
+	}
+	for _, provider := range p.providers {
+		provider.EvictIdle(now, p.idleTTL)
+	}
+}
+
+func projectInfoFromConfig(configPath string, cfg config.CLIProjectConfig) mcpserver.ProjectInfo {
+	info := mcpserver.ProjectInfo{
+		ProjectID: cfg.ProjectID,
+		Path:      filepath.Clean(cfg.RepoPath),
+		Config:    filepath.Clean(configPath),
+		Status:    "not_indexed",
+		Hint:      "run seshat scan",
+	}
+	status, err := localindex.ReadStatus(configPath)
+	if err != nil {
+		return info
+	}
+	info.Status = "indexed"
+	info.Hint = ""
+	info.LastIndexedAt = status.GeneratedAt.Format(time.RFC3339)
+	info.FilesCount = status.FilesCount
+	info.SymbolsCount = status.SymbolsCount
+	info.RelationsCount = status.RelationsCount
+	return info
 }
 
 type reloadingQueryProvider struct {
+	mu         sync.Mutex
 	configPath string
 	projectID  string
 	modTime    time.Time
 	size       int64
+	lastUsed   time.Time
 	query      *localquery.Service
 }
 
 func (p *reloadingQueryProvider) Query() (*localquery.Service, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
 	info, err := os.Stat(localindex.GraphPath(p.configPath))
 	if err != nil {
 		return nil, err
 	}
 	if p.query != nil && info.Size() == p.size && info.ModTime().Equal(p.modTime) {
+		p.lastUsed = now
 		return p.query, nil
 	}
 	batch, err := localindex.ReadGraph(p.configPath)
@@ -381,7 +708,19 @@ func (p *reloadingQueryProvider) Query() (*localquery.Service, error) {
 	p.query = query
 	p.modTime = info.ModTime()
 	p.size = info.Size()
+	p.lastUsed = now
 	return p.query, nil
+}
+
+func (p *reloadingQueryProvider) EvictIdle(now time.Time, ttl time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.query == nil || p.lastUsed.IsZero() || now.Sub(p.lastUsed) < ttl {
+		return
+	}
+	p.query = nil
+	p.modTime = time.Time{}
+	p.size = 0
 }
 
 func runGraph(args []string, stdout, stderr io.Writer) error {
@@ -432,22 +771,18 @@ func runGraph(args []string, stdout, stderr io.Writer) error {
 
 func runSetup(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	configPath := fs.String("config", ".seshat/project.yaml", "Path to project config")
+	registryPath := fs.String("registry", defaultMCPRegistryPath(), "Path to multi-project MCP registry")
 	client := fs.String("client", "all", "Client to configure: cursor, codex, claude, all")
 	printOnly := fs.Bool("print", true, "Print config snippets")
 	binaryPath := fs.String("binary", "seshat", "Seshat CLI command or absolute binary path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	setupConfigPath := *configPath
-	if abs, absErr := filepath.Abs(*configPath); absErr == nil {
+	setupConfigPath := filepath.Clean(expandHome(*registryPath))
+	if abs, absErr := filepath.Abs(setupConfigPath); absErr == nil {
 		setupConfigPath = abs
 	}
-	var projectID string
-	if cfg, _, err := loadConfigWithHash(*configPath); err == nil {
-		projectID = cfg.ProjectID
-	}
-	snippets, err := setup.Generate(setup.Client(*client), *binaryPath, setupConfigPath, projectID)
+	snippets, err := setup.Generate(setup.Client(*client), *binaryPath, setupConfigPath)
 	if err != nil {
 		return err
 	}
@@ -628,50 +963,6 @@ func projectIDFromPath(path string) string {
 	return id
 }
 
-func mergeIncremental(current, delta model.AnalysisBatch, changed []string) model.AnalysisBatch {
-	changedSet := make(map[string]struct{}, len(changed))
-	for _, file := range changed {
-		changedSet[filepath.Clean(file)] = struct{}{}
-	}
-	replacedFileIDs := make(map[string]struct{})
-	for _, file := range current.Files {
-		if _, ok := changedSet[filepath.Clean(file.Path)]; ok {
-			replacedFileIDs[file.ID] = struct{}{}
-		}
-	}
-	replacedSymbolIDs := make(map[string]struct{})
-	for _, symbol := range current.Symbols {
-		if _, ok := replacedFileIDs[symbol.FileID]; ok {
-			replacedSymbolIDs[symbol.ID] = struct{}{}
-		}
-	}
-	merged := model.AnalysisBatch{Metadata: delta.Metadata}
-	for _, file := range current.Files {
-		if _, ok := replacedFileIDs[file.ID]; !ok {
-			merged.Files = append(merged.Files, file)
-		}
-	}
-	for _, symbol := range current.Symbols {
-		if _, ok := replacedSymbolIDs[symbol.ID]; !ok {
-			merged.Symbols = append(merged.Symbols, symbol)
-		}
-	}
-	for _, relation := range current.Relations {
-		_, fromReplaced := replacedSymbolIDs[relation.FromSymbolID]
-		_, toReplaced := replacedSymbolIDs[relation.ToSymbolID]
-		if !fromReplaced && !toReplaced {
-			merged.Relations = append(merged.Relations, relation)
-		}
-	}
-	merged.Files = append(merged.Files, delta.Files...)
-	merged.Symbols = append(merged.Symbols, delta.Symbols...)
-	merged.Relations = append(merged.Relations, delta.Relations...)
-	sort.Slice(merged.Files, func(i, j int) bool { return merged.Files[i].Path < merged.Files[j].Path })
-	sort.Slice(merged.Symbols, func(i, j int) bool { return merged.Symbols[i].ID < merged.Symbols[j].ID })
-	sort.Slice(merged.Relations, func(i, j int) bool { return merged.Relations[i].ID < merged.Relations[j].ID })
-	return merged
-}
-
 func indexableChangedFiles(files []string, cfg config.CLIProjectConfig) []string {
 	allowedExt := make(map[string]struct{})
 	for _, target := range cfg.LanguageTargets {
@@ -762,13 +1053,37 @@ func usage(out io.Writer) {
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  seshat init [--config .seshat/project.yaml]")
 	fmt.Fprintln(out, "  seshat scan|c [--config .seshat/project.yaml] [--parallel|-p 1] [-v] [--dry-run] [--json]")
-	fmt.Fprintln(out, "  seshat push [--config .seshat/project.yaml] [--force]")
-	fmt.Fprintln(out, "  seshat watch [--config .seshat/project.yaml] [--debounce 2000]")
 	fmt.Fprintln(out, "  seshat inspect [--config .seshat/project.yaml] [--json]")
 	fmt.Fprintln(out, "  seshat status [--config .seshat/project.yaml] [--json]")
-	fmt.Fprintln(out, "  seshat mcp [--config .seshat/project.yaml]")
+	fmt.Fprintln(out, "  seshat mcp [--registry ~/.seshat/config.yml]")
 	fmt.Fprintln(out, "  seshat graph --file path/to/file.go [--format mermaid|dot|json]")
-	fmt.Fprintln(out, "  seshat setup [--client cursor|codex|claude|all] [--print]")
+	fmt.Fprintln(out, "  seshat setup [--registry ~/.seshat/config.yml] [--client cursor|codex|claude|all] [--print]")
+}
+
+func mcpUsage(out io.Writer) {
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  seshat mcp [--registry ~/.seshat/config.yml]")
+	fmt.Fprintln(out, "  seshat mcp add {folder_project} [--registry ~/.seshat/config.yml] [--reload]")
+	fmt.Fprintln(out, "  seshat mcp reload [--registry ~/.seshat/config.yml]")
+	fmt.Fprintln(out, "  seshat mcp project ls [--registry ~/.seshat/config.yml] [--sort id|path] [--json]")
+	fmt.Fprintln(out, "  seshat mcp config path|show|edit [--registry ~/.seshat/config.yml]")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "Notes:")
+	fmt.Fprintln(out, "  --registry serves one MCP for all registered projects over stdio.")
+	fmt.Fprintln(out, "  MCP clients should call list_projects first when project_id is unknown.")
+	fmt.Fprintln(out, "  reload validates config; stdio MCP processes lazily reload on their next tool call.")
+}
+
+func mcpProjectUsage(out io.Writer) {
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  seshat mcp project ls [--registry ~/.seshat/config.yml] [--sort id|path] [--json]")
+}
+
+func mcpConfigUsage(out io.Writer) {
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  seshat mcp config path [--registry ~/.seshat/config.yml]")
+	fmt.Fprintln(out, "  seshat mcp config show [--registry ~/.seshat/config.yml]")
+	fmt.Fprintln(out, "  seshat mcp config edit [--registry ~/.seshat/config.yml]")
 }
 
 func discoverChangedFiles(repoPath string) ([]string, error) {
@@ -931,4 +1246,3 @@ func runDependencies(args []string, stdout io.Writer) error {
 	fmt.Fprintln(stdout, string(body))
 	return nil
 }
-

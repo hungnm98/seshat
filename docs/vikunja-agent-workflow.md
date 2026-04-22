@@ -23,6 +23,7 @@ Neu task khong ghi khac, mac dinh theo cac quyet dinh sau:
 - Parser adapter theo ngon ngu, output chung graph schema.
 - Uu tien language: Ruby + Go truoc, TypeScript/JavaScript sau, Java sau cung.
 - MCP gateway la multi-project gateway, moi tool call phai co `project_id`.
+- Local V1 dung mot MCP entry chung ten `seshat` voi registry `$HOME/.seshat/config.yml`; agent goi `list_projects` de lay `project_id`.
 - Khong spawn MCP process rieng cho tung project trong MVP neu khong co yeu cau moi.
 
 ## Labels Dieu Phoi

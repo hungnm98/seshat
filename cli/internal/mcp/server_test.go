@@ -47,6 +47,48 @@ func TestServerListsAndCallsTools(t *testing.T) {
 	if len(callResp.Result.StructuredContent.Results) != 1 || callResp.Result.StructuredContent.Results[0].Name != "Run" {
 		t.Fatalf("unexpected tool call response: %s", lines[2])
 	}
+	if !strings.Contains(lines[1], `"seshat_info"`) || !strings.Contains(lines[1], `"list_projects"`) {
+		t.Fatalf("expected discovery tools in tools/list, got %s", lines[1])
+	}
+	if !strings.Contains(lines[0], "Multi-project code knowledge graph MCP") {
+		t.Fatalf("expected initialize metadata description, got %s", lines[0])
+	}
+}
+
+func TestDiscoveryToolsDescribeAndListProjects(t *testing.T) {
+	query := testQuery(t, "Run")
+	server := NewServerWithProjectProviderAndLister(
+		func(projectID string) (*localquery.Service, error) {
+			if projectID != "proj" {
+				t.Fatalf("unexpected project id: %s", projectID)
+			}
+			return query, nil
+		},
+		func() ([]ProjectInfo, error) {
+			return []ProjectInfo{
+				{ProjectID: "proj", Path: "/repo", Config: "/repo/.seshat/project.yaml", Status: "indexed", FilesCount: 1, SymbolsCount: 1},
+			}, nil
+		},
+	)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"seshat_info","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}`,
+	}, "\n") + "\n"
+	var out bytes.Buffer
+
+	if err := server.Serve(strings.NewReader(input), &out); err != nil {
+		t.Fatalf("Serve returned error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 responses, got %d: %s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], `"requires_project_id":true`) || !strings.Contains(lines[0], "Call list_projects") {
+		t.Fatalf("unexpected seshat_info response: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"project_id":"proj"`) || !strings.Contains(lines[1], `"status":"indexed"`) {
+		t.Fatalf("unexpected list_projects response: %s", lines[1])
+	}
 }
 
 func TestServerRejectsUnknownMethod(t *testing.T) {

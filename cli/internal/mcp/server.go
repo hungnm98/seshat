@@ -14,7 +14,20 @@ import (
 const protocolVersion = "2025-06-18"
 
 type Server struct {
-	queryProvider func() (*localquery.Service, error)
+	queryProvider func(projectID string) (*localquery.Service, error)
+	projectLister func() ([]ProjectInfo, error)
+}
+
+type ProjectInfo struct {
+	ProjectID      string `json:"project_id"`
+	Path           string `json:"path"`
+	Config         string `json:"config"`
+	Status         string `json:"status"`
+	Hint           string `json:"hint,omitempty"`
+	LastIndexedAt  string `json:"last_indexed_at,omitempty"`
+	FilesCount     int    `json:"files_count,omitempty"`
+	SymbolsCount   int    `json:"symbols_count,omitempty"`
+	RelationsCount int    `json:"relations_count,omitempty"`
 }
 
 func NewServer(query *localquery.Service) *Server {
@@ -24,7 +37,17 @@ func NewServer(query *localquery.Service) *Server {
 }
 
 func NewServerWithProvider(provider func() (*localquery.Service, error)) *Server {
-	return &Server{queryProvider: provider}
+	return NewServerWithProjectProvider(func(_ string) (*localquery.Service, error) {
+		return provider()
+	})
+}
+
+func NewServerWithProjectProvider(provider func(projectID string) (*localquery.Service, error)) *Server {
+	return NewServerWithProjectProviderAndLister(provider, nil)
+}
+
+func NewServerWithProjectProviderAndLister(provider func(projectID string) (*localquery.Service, error), lister func() ([]ProjectInfo, error)) *Server {
+	return &Server{queryProvider: provider, projectLister: lister}
 }
 
 func (s *Server) Serve(in io.Reader, out io.Writer) error {
@@ -86,8 +109,9 @@ func (s *Server) handle(req request) *response {
 				"tools": map[string]any{"listChanged": false},
 			},
 			"serverInfo": map[string]any{
-				"name":    "seshat-local",
-				"version": "0.1.0",
+				"name":        "seshat",
+				"version":     "0.1.0",
+				"description": "Multi-project code knowledge graph MCP. Call list_projects first when project_id is unknown.",
 			},
 		})
 	case "ping":
@@ -140,11 +164,33 @@ func (s *Server) callTool(params json.RawMessage) (map[string]any, error) {
 }
 
 func (s *Server) execute(name string, args map[string]any) (any, string, error) {
+	switch name {
+	case "seshat_info":
+		return map[string]any{
+			"name":        "seshat",
+			"description": "Code knowledge graph MCP for multiple local projects.",
+			"workflow": []string{
+				"Call list_projects to choose a project_id.",
+				"Use find_symbol to locate symbols.",
+				"Use get_symbol_detail, find_callers, find_callees, or file_dependency_graph for impact analysis.",
+			},
+			"requires_project_id": true,
+		}, "", nil
+	case "list_projects":
+		if s.projectLister == nil {
+			return nil, "", fmt.Errorf("list_projects is not configured for this Seshat MCP server")
+		}
+		projects, err := s.projectLister()
+		if err != nil {
+			return nil, "", err
+		}
+		return map[string]any{"projects": projects}, "", nil
+	}
 	projectID, err := stringArg(args, "project_id", true)
 	if err != nil {
 		return nil, "", err
 	}
-	queryService, err := s.queryProvider()
+	queryService, err := s.queryProvider(projectID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -299,11 +345,23 @@ func boolArg(args map[string]any, name string, fallback bool) bool {
 func tools() []map[string]any {
 	return []map[string]any{
 		{
+			"name":        "seshat_info",
+			"title":       "Seshat Info",
+			"description": "Explain what the Seshat MCP server does and how an AI should use it.",
+			"inputSchema": objectSchema(map[string]any{}, nil),
+		},
+		{
+			"name":        "list_projects",
+			"title":       "List Projects",
+			"description": "List local projects registered in Seshat. Call this first when project_id is unknown.",
+			"inputSchema": objectSchema(map[string]any{}, nil),
+		},
+		{
 			"name":        "find_symbol",
 			"title":       "Find Symbol",
-			"description": "Find symbols in the local Seshat index by name, signature, or id.",
+			"description": "Use after list_projects when you know project_id. Find symbols by name, signature, or id.",
 			"inputSchema": objectSchema(map[string]any{
-				"project_id": stringSchema("Project id from .seshat/project.yaml."),
+				"project_id": stringSchema("Project id from list_projects."),
 				"query":      stringSchema("Symbol name, signature, or id fragment."),
 				"kind":       stringSchema("Optional symbol kind filter."),
 				"limit":      integerSchema("Maximum results, capped by the local query engine."),
@@ -314,7 +372,7 @@ func tools() []map[string]any {
 			"title":       "Get Symbol Detail",
 			"description": "Return symbol metadata with inbound and outbound relations.",
 			"inputSchema": objectSchema(map[string]any{
-				"project_id": stringSchema("Project id from .seshat/project.yaml."),
+				"project_id": stringSchema("Project id from list_projects."),
 				"symbol_id":  stringSchema("Symbol id returned by find_symbol."),
 			}, []string{"project_id", "symbol_id"}),
 		},
@@ -323,7 +381,7 @@ func tools() []map[string]any {
 			"title":       "Find Callers",
 			"description": "Return symbols that call a target symbol with bounded traversal depth.",
 			"inputSchema": objectSchema(map[string]any{
-				"project_id": stringSchema("Project id from .seshat/project.yaml."),
+				"project_id": stringSchema("Project id from list_projects."),
 				"symbol_id":  stringSchema("Target symbol id."),
 				"depth":      integerSchema("Traversal depth, capped at 3."),
 			}, []string{"project_id", "symbol_id"}),
@@ -333,7 +391,7 @@ func tools() []map[string]any {
 			"title":       "Find Callees",
 			"description": "Return symbols called by a target symbol with bounded traversal depth.",
 			"inputSchema": objectSchema(map[string]any{
-				"project_id": stringSchema("Project id from .seshat/project.yaml."),
+				"project_id": stringSchema("Project id from list_projects."),
 				"symbol_id":  stringSchema("Target symbol id."),
 				"depth":      integerSchema("Traversal depth, capped at 3."),
 			}, []string{"project_id", "symbol_id"}),
@@ -341,9 +399,9 @@ func tools() []map[string]any {
 		{
 			"name":        "file_dependency_graph",
 			"title":       "File Dependency Graph",
-			"description": "Return file-level dependencies and dependents for a project-relative file.",
+			"description": "Use before editing a file to understand impact. Return file-level dependencies and dependents for a project-relative file.",
 			"inputSchema": objectSchema(map[string]any{
-				"project_id": stringSchema("Project id from .seshat/project.yaml."),
+				"project_id": stringSchema("Project id from list_projects."),
 				"file":       stringSchema("Project-relative file path."),
 				"depth":      integerSchema("Traversal depth, capped at 3."),
 				"direction":  stringSchema("Optional direction: both, depends-on, dependents."),
@@ -387,6 +445,9 @@ func compactDependencies(dependencies []model.FileDependency) {
 }
 
 func objectSchema(properties map[string]any, required []string) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
