@@ -36,6 +36,9 @@ import (
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		log.Fatal(err)
 	}
 }
@@ -46,6 +49,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	switch args[0] {
+	case "help", "-h", "--help":
+		usage(stdout)
+		return nil
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "scan", "c":
@@ -83,13 +89,26 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	projectID := fs.String("project-id", "", "Project id to write into config")
 	repoPath := fs.String("repo", ".", "Repository path to index")
 	force := fs.Bool("force", false, "Overwrite existing config")
-	if err := fs.Parse(args); err != nil {
+	normalizedArgs, positionalRepo, err := normalizeInitArgs(args)
+	if err != nil {
 		return err
+	}
+	if err := fs.Parse(normalizedArgs); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("usage: seshat init [path] [--config .seshat/project.yaml]")
+	}
+	repo := *repoPath
+	if positionalRepo != "" {
+		repo = positionalRepo
+	} else if fs.NArg() == 1 {
+		repo = fs.Arg(0)
 	}
 	if _, err := os.Stat(*configPath); err == nil && !*force {
 		return fmt.Errorf("%s already exists; pass --force to overwrite", *configPath)
 	}
-	repoAbs, err := filepath.Abs(*repoPath)
+	repoAbs, err := filepath.Abs(repo)
 	if err != nil {
 		return err
 	}
@@ -128,6 +147,33 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "initialized Seshat project %q at %s\n", cfg.ProjectID, *configPath)
 	return nil
+}
+
+func normalizeInitArgs(args []string) ([]string, string, error) {
+	normalized := make([]string, 0, len(args))
+	positionalRepo := ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--config" || arg == "--project-id" || arg == "--repo":
+			if i+1 >= len(args) {
+				return nil, "", fmt.Errorf("%s requires a value", arg)
+			}
+			normalized = append(normalized, arg, args[i+1])
+			i++
+		case strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "--project-id=") || strings.HasPrefix(arg, "--repo="):
+			normalized = append(normalized, arg)
+		case arg == "--force":
+			normalized = append(normalized, arg)
+		case strings.HasPrefix(arg, "-"):
+			normalized = append(normalized, arg)
+		case positionalRepo == "":
+			positionalRepo = arg
+		default:
+			normalized = append(normalized, arg)
+		}
+	}
+	return normalized, positionalRepo, nil
 }
 
 func runScan(args []string, stdout, stderr io.Writer) error {
@@ -1055,7 +1101,7 @@ func gitValue(repo string, args ...string) string {
 
 func usage(out io.Writer) {
 	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  seshat init [--config .seshat/project.yaml]")
+	fmt.Fprintln(out, "  seshat init [path] [--config .seshat/project.yaml]")
 	fmt.Fprintln(out, "  seshat scan|c [--config .seshat/project.yaml] [--parallel|-p 1] [-v] [--dry-run] [--json]")
 	fmt.Fprintln(out, "  seshat inspect [--config .seshat/project.yaml] [--json]")
 	fmt.Fprintln(out, "  seshat status [--config .seshat/project.yaml] [--json]")

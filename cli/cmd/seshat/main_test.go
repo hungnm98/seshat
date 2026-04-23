@@ -97,6 +97,44 @@ func Validate() {}
 	}
 }
 
+func TestRootHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"-h"}, &stdout, &stderr); err != nil {
+		t.Fatalf("-h failed: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"seshat init [path]",
+		"seshat scan|c",
+		"seshat mcp",
+		"seshat version",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %s", want, out)
+		}
+	}
+}
+
+func TestInitAcceptsPositionalRepo(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "main.go", "package main\n")
+	configPath := filepath.Join(repo, ".seshat", "project.yaml")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"init", repo, "--config", configPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("init with positional repo failed: %v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `initialized Seshat project`) {
+		t.Fatalf("expected init summary, got %s", stdout.String())
+	}
+	status, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("expected config file: %v", err)
+	}
+	if status.IsDir() {
+		t.Fatalf("expected config path to be a file")
+	}
+}
+
 func TestLocalMCPCommandSmoke(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, repo, "git", "init")
