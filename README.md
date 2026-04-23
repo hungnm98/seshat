@@ -74,6 +74,7 @@ go test ./server/...
 
 ./scripts/build-local.sh
 ./scripts/build-local.sh /tmp/seshat
+./scripts/build-release.sh
 
 cd cli
 go run ./cmd/seshat init --repo .. --config ../.seshat/project.yaml
