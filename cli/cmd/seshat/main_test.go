@@ -155,6 +155,16 @@ func TestMCPHelp(t *testing.T) {
 	}
 }
 
+func TestVersionCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"version"}, &stdout, &stderr); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "seshat 0.2.0" {
+		t.Fatalf("unexpected version output: %q", got)
+	}
+}
+
 func TestMCPAddProjectListAndConfigCommands(t *testing.T) {
 	root := t.TempDir()
 	registryPath := filepath.Join(root, "config.yml")
