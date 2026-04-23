@@ -7,6 +7,8 @@ Mandatory:
 - Call `list_projects` when `project_id` is unknown
 - Pass the returned `project_id` to every project-scoped Seshat tool
 - Use `$HOME/.seshat/config.yml` as the shared MCP registry
+- Run `seshat scan` before non-trivial codebase analysis if the index may be stale, after pulling new code, and after making code changes
+- Use `file_dependency_graph` before editing a file to understand impact
 
 If the codebase changes significantly:
 - Execute: `seshat scan`

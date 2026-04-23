@@ -1,102 +1,205 @@
 # Seshat
 
-Seshat is a Go-based code knowledge graph and AI context engine. The current V1 workflow is CLI-first: parse repositories locally, store JSON graph indexes, and expose them through one shared local MCP stdio server named `seshat` for Codex, Cursor, Claude, and other MCP clients.
+Seshat is a local code knowledge graph for AI coding agents. It scans local repositories, writes a lightweight graph index, and exposes all registered projects through one shared MCP server named `seshat`.
 
-- `cli/` for local scanning, parsing, JSON indexing, MCP, and agent-facing queries
-- `server/` for later ingestion, query APIs, admin UI, token auth, worker jobs, and MCP gateway work
-- Go + Ruby parser adapters
-- Git-native task management in `tasks/`
+The normal workflow is:
 
-## Quick Start
+1. Download the `seshat` binary.
+2. Run `seshat scan` in each project you want AI to understand.
+3. Register those projects in `$HOME/.seshat/config.yml`.
+4. Add one MCP entry named `seshat` to Cursor, Codex, Claude, or another MCP client.
+5. Tell the AI agent to call `list_projects` and pass `project_id` to Seshat tools.
 
-Run the local-only flow from the repository you want to index:
+## Download
 
-```bash
-cd cli
-go run ./cmd/seshat init --repo .. --config ../.seshat/project.yaml --project-id seshat
-go run ./cmd/seshat ingest --config ../.seshat/project.yaml --parallel 1
-go run ./cmd/seshat status --config ../.seshat/project.yaml
-go run ./cmd/seshat inspect --config ../.seshat/project.yaml --json
-go run ./cmd/seshat graph --config ../.seshat/project.yaml --file cli/cmd/seshat/main.go --format mermaid
-```
+Download the latest release from:
 
-Register the project in the shared local MCP registry:
+[https://github.com/hungnm98/seshat/releases/latest](https://github.com/hungnm98/seshat/releases/latest)
 
-```bash
-cd cli
-go run ./cmd/seshat mcp add .. --registry $HOME/.seshat/config.yml
-go run ./cmd/seshat mcp project ls --registry $HOME/.seshat/config.yml --sort id
-```
+Choose the artifact for your machine:
 
-Generate one MCP client config entry named `seshat`:
+| Platform | Artifact |
+| --- | --- |
+| MacBook / macOS universal | `seshat_*_macos_universal.tar.gz` |
+| macOS Apple Silicon | `seshat_*_macos_arm64.tar.gz` |
+| macOS Intel | `seshat_*_macos_amd64.tar.gz` |
+| Linux 64-bit | `seshat_*_linux_amd64.tar.gz` |
+| Windows 64-bit | `seshat_*_windows_amd64.zip` |
+
+macOS install:
 
 ```bash
-cd cli
-go run ./cmd/seshat setup --registry $HOME/.seshat/config.yml --client all --print
+mkdir -p $HOME/.local/bin
+tar -xzf seshat_*_macos_universal.tar.gz
+cp seshat_*/seshat $HOME/.local/bin/seshat
+chmod +x $HOME/.local/bin/seshat
+seshat version
 ```
 
-Start the shared MCP stdio server:
+Linux install:
 
 ```bash
-cd cli
-go run ./cmd/seshat mcp --registry $HOME/.seshat/config.yml
+mkdir -p $HOME/.local/bin
+tar -xzf seshat_*_linux_amd64.tar.gz
+cp seshat_*/seshat $HOME/.local/bin/seshat
+chmod +x $HOME/.local/bin/seshat
+seshat version
 ```
 
-Agents discover projects by calling `list_projects` on the `seshat` MCP server, then pass the returned `project_id` to code graph tools. The registry supports `cache.idle_ttl` (default `30m`) so unused project indexes are released from RAM while the MCP process keeps running. Each stdio MCP process checks registry and graph file changes on tool calls, so reload is lazy per process rather than broadcast.
+Windows install:
 
-## Refreshing The Index
+```powershell
+Expand-Archive .\seshat_*_windows_amd64.zip -DestinationPath .\seshat-release
+mkdir $HOME\.local\bin -Force
+copy .\seshat-release\seshat_*\seshat.exe $HOME\.local\bin\seshat.exe
+seshat.exe version
+```
+
+## Index A Project
+
+Run this once in each repository you want Seshat to understand:
 
 ```bash
-go run ./cmd/seshat scan --config ../.seshat/project.yaml --parallel 4
+cd /absolute/path/to/project
+seshat init --repo . --config .seshat/project.yaml --project-id my-project
+seshat scan --config .seshat/project.yaml --parallel 4
+seshat status --config .seshat/project.yaml
 ```
 
-`scan` refreshes the local JSON index from the repository. Running MCP processes lazily reload the updated graph on their next tool call.
+Use a stable `project_id`, because AI agents will pass that value to Seshat MCP tools.
+
+## Add MCP
+
+Seshat uses one shared MCP server for all local projects. The shared registry is:
+
+```text
+$HOME/.seshat/config.yml
+```
+
+Register a project:
+
+```bash
+seshat mcp add /absolute/path/to/project --registry $HOME/.seshat/config.yml --reload
+seshat mcp project ls --registry $HOME/.seshat/config.yml --sort id
+```
+
+Generate MCP client config:
+
+```bash
+seshat setup --registry $HOME/.seshat/config.yml --client all --print
+```
+
+The MCP entry should be named `seshat` and run:
+
+```bash
+seshat mcp --registry $HOME/.seshat/config.yml
+```
+
+Cursor example:
+
+```json
+{
+  "mcpServers": {
+    "seshat": {
+      "command": "/Users/me/.local/bin/seshat",
+      "args": ["mcp", "--registry", "/Users/me/.seshat/config.yml"]
+    }
+  }
+}
+```
+
+Codex example:
+
+```toml
+[mcp_servers.seshat]
+command = "/Users/me/.local/bin/seshat"
+args = ["mcp", "--registry", "/Users/me/.seshat/config.yml"]
+```
+
+Claude example:
+
+```json
+{
+  "mcpServers": {
+    "seshat": {
+      "command": "/Users/me/.local/bin/seshat",
+      "args": ["mcp", "--registry", "/Users/me/.seshat/config.yml"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+## Agent Instructions
+
+Add this to `AGENTS.md`, `CLAUDE.md`, Cursor rules, or the agent instruction file for each workspace:
+
+```md
+Use the shared `seshat` MCP server for codebase analysis.
+
+Mandatory:
+- Call `list_projects` first when `project_id` is unknown.
+- Pass the returned `project_id` to every Seshat code graph tool.
+- Run `seshat scan` before non-trivial codebase analysis if the index may be stale, after pulling new code, and after making code changes.
+- Use `find_symbol`, `get_symbol_detail`, `find_callers`, `find_callees`, and `file_dependency_graph` before editing or reviewing code.
+- Use `file_dependency_graph` before editing a file to understand depends-on and dependent files.
+```
+
+## How AI Uses Seshat
+
+Agents should discover projects with:
+
+```text
+list_projects()
+```
+
+Then use the returned `project_id` with:
+
+```text
+find_symbol(project_id, query)
+get_symbol_detail(project_id, symbol_id)
+find_callers(project_id, symbol_id)
+find_callees(project_id, symbol_id)
+file_dependency_graph(project_id, file)
+```
+
+Before editing a file, agents should call `file_dependency_graph` to understand what the file depends on and what depends on it.
+
+## Refresh The Index
+
+Run this whenever the code changes, after pulling new code, or before serious codebase analysis if the index may be stale:
+
+```bash
+cd /absolute/path/to/project
+seshat scan --config .seshat/project.yaml --parallel 4
+```
+
+Running MCP processes lazily reload updated graph files on their next tool call.
 
 ## Local Files
 
-- `.seshat/project.yaml` stores local project config.
-- `$HOME/.seshat/config.yml` stores the shared multi-project MCP registry.
-- `.seshat/index/graph.json` stores the latest `AnalysisBatch`.
-- `.seshat/index/status.json` stores counts, commit metadata, language summary, scan mode, and config hash.
+- `.seshat/project.yaml`: project scan config.
+- `.seshat/index/graph.json`: local symbol/relation graph.
+- `.seshat/index/status.json`: scan status, counts, commit, branch, and language summary.
+- `$HOME/.seshat/config.yml`: shared multi-project MCP registry.
 
-## MVP Notes
+Seshat does not upload source code in local V1. The local index stores parsed metadata: files, symbols, relations, and version metadata.
 
-- Local V1 does not require login, API tokens, PostgreSQL, Redis, MinIO, or a running server.
-- The CLI does not upload source code. The local index stores parsed metadata: files, symbols, relations, and version metadata.
-- Existing server code remains in the repo for future remote ingestion and gateway work.
-- See `docs/contracts/cli-first.md` for the command and MCP contract.
-
-## Commands
+## Development
 
 ```bash
 go test ./cli/...
 go test ./server/...
 
 ./scripts/build-local.sh
-./scripts/build-local.sh /tmp/seshat
-
-cd cli
-go run ./cmd/seshat init --repo .. --config ../.seshat/project.yaml
-go run ./cmd/seshat ingest --config ../.seshat/project.yaml --parallel 4 -v
-go run ./cmd/seshat inspect --config ../.seshat/project.yaml --json
-go run ./cmd/seshat status --config ../.seshat/project.yaml --json
-go run ./cmd/seshat mcp -h
-go run ./cmd/seshat graph --config ../.seshat/project.yaml --file cli/cmd/seshat/main.go --format mermaid
-go run ./cmd/seshat setup --registry $HOME/.seshat/config.yml --client claude --print
+./scripts/build-release.sh
 ```
 
-## Project Layout
+Project layout:
 
 ```text
-cli/                 CLI project and Go module
-cli/cmd/seshat/      CLI binary
-cli/internal/        Local index, query, MCP, setup, parser packages
-cli/pkg/             CLI graph schema and model contracts
-server/              Backend project and Go module
-server/cmd/server/   HTTP server binary
-server/cmd/worker/   Background worker binary
-server/cmd/mcp/      MCP metadata binary
-server/internal/     Admin, API, auth, ingestion, query, and storage
-server/pkg/          Server graph schema and model contracts
-tasks/               Git-native backlog, roadmap, and execution workflow
+cli/       local scanner, indexer, MCP server, setup helpers, parser packages
+server/    later server-backed APIs, storage, workers, and remote MCP gateway
+docs/      architecture and CLI/MCP contracts
+scripts/   local and release build helpers
 ```

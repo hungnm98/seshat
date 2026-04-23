@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/hungnm98/seshat-cli/internal/localquery"
+	"github.com/hungnm98/seshat-cli/internal/version"
 	"github.com/hungnm98/seshat-cli/pkg/model"
 )
 
@@ -110,7 +111,7 @@ func (s *Server) handle(req request) *response {
 			},
 			"serverInfo": map[string]any{
 				"name":        "seshat",
-				"version":     "0.1.0",
+				"version":     version.Version,
 				"description": "Multi-project code knowledge graph MCP. Call list_projects first when project_id is unknown.",
 			},
 		})

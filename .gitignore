@@ -21,6 +21,7 @@ profile.cov
 # vendor/
 
 go.work.sum
+dist/
 
 # env file
 .env
