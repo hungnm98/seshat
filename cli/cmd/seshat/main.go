@@ -27,6 +27,7 @@ import (
 	jsanalyzer "github.com/hungnm98/seshat-cli/internal/parser/javascript"
 	rubyanalyzer "github.com/hungnm98/seshat-cli/internal/parser/ruby"
 	"github.com/hungnm98/seshat-cli/internal/setup"
+	"github.com/hungnm98/seshat-cli/internal/version"
 	"github.com/hungnm98/seshat-cli/internal/watch"
 	"github.com/hungnm98/seshat-cli/pkg/graphschema"
 	"github.com/hungnm98/seshat-cli/pkg/model"
@@ -66,6 +67,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runAuth(args[1:], stdout)
 	case "dependencies":
 		return runDependencies(args[1:], stdout)
+	case "version", "--version", "-v":
+		fmt.Fprintf(stdout, "seshat %s\n", version.Version)
+		return nil
 	default:
 		usage(stdout)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -1058,6 +1062,7 @@ func usage(out io.Writer) {
 	fmt.Fprintln(out, "  seshat mcp [--registry ~/.seshat/config.yml]")
 	fmt.Fprintln(out, "  seshat graph --file path/to/file.go [--format mermaid|dot|json]")
 	fmt.Fprintln(out, "  seshat setup [--registry ~/.seshat/config.yml] [--client cursor|codex|claude|all] [--print]")
+	fmt.Fprintln(out, "  seshat version")
 }
 
 func mcpUsage(out io.Writer) {
