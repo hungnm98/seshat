@@ -5,7 +5,7 @@ Seshat is a local code knowledge graph for AI coding agents. It scans local repo
 The normal workflow is:
 
 1. Download the `seshat` binary.
-2. Run `seshat scan` in each project you want AI to understand.
+2. Run `seshat init .` and `seshat scan` in each project you want AI to understand.
 3. Register those projects in `$HOME/.seshat/config.yml`.
 4. Add one MCP entry named `seshat` to Cursor, Codex, Claude, or another MCP client.
 5. Tell the AI agent to call `list_projects` and pass `project_id` to Seshat tools.
@@ -61,12 +61,12 @@ Run this once in each repository you want Seshat to understand:
 
 ```bash
 cd /absolute/path/to/project
-seshat init --repo . --config .seshat/project.yaml --project-id my-project
-seshat scan --config .seshat/project.yaml --parallel 4
-seshat status --config .seshat/project.yaml
+seshat init .
+seshat scan
+seshat status
 ```
 
-Use a stable `project_id`, because AI agents will pass that value to Seshat MCP tools.
+By default, `seshat init .` writes `.seshat/project.yaml` and derives `project_id` from the folder name. Use `seshat init -h` if you need to override paths or project id.
 
 ## Add MCP
 
@@ -79,20 +79,20 @@ $HOME/.seshat/config.yml
 Register a project:
 
 ```bash
-seshat mcp add /absolute/path/to/project --registry $HOME/.seshat/config.yml --reload
-seshat mcp project ls --registry $HOME/.seshat/config.yml --sort id
+seshat mcp add .
+seshat mcp project ls
 ```
 
 Generate MCP client config:
 
 ```bash
-seshat setup --registry $HOME/.seshat/config.yml --client all --print
+seshat setup --client all --print
 ```
 
 The MCP entry should be named `seshat` and run:
 
 ```bash
-seshat mcp --registry $HOME/.seshat/config.yml
+seshat mcp
 ```
 
 Cursor example:
@@ -171,10 +171,24 @@ Run this whenever the code changes, after pulling new code, or before serious co
 
 ```bash
 cd /absolute/path/to/project
-seshat scan --config .seshat/project.yaml --parallel 4
+seshat scan
 ```
 
 Running MCP processes lazily reload updated graph files on their next tool call.
+
+## CLI Help
+
+```text
+Usage:
+  seshat init [path] [--config .seshat/project.yaml]
+  seshat scan|c [--config .seshat/project.yaml] [--parallel|-p 1] [-v] [--dry-run] [--json]
+  seshat inspect [--config .seshat/project.yaml] [--json]
+  seshat status [--config .seshat/project.yaml] [--json]
+  seshat mcp [--registry ~/.seshat/config.yml]
+  seshat graph --file path/to/file.go [--format mermaid|dot|json]
+  seshat setup [--registry ~/.seshat/config.yml] [--client cursor|codex|claude|all] [--print]
+  seshat version
+```
 
 ## Local Files
 
