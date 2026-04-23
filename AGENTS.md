@@ -1,10 +1,12 @@
 # Codebase
 
-Use the `seshat-{project-id}` MCP server for all codebase analysis.
+Use the shared `seshat` MCP server for all codebase analysis.
 
 Mandatory:
 - Use seshat tools for symbol lookup, file exploration, and dependency analysis
-- Retrieve `project-id` from `.seshat/project.yaml`
+- Call `list_projects` when `project_id` is unknown
+- Pass the returned `project_id` to every project-scoped Seshat tool
+- Use `$HOME/.seshat/config.yml` as the shared MCP registry
 
 If the codebase changes significantly:
 - Execute: `seshat scan`

@@ -38,6 +38,8 @@ Seshat should make these workflows faster and safer:
 ## Architecture Decisions
 
 - Use one MCP gateway with project-scoped tools, not one MCP server process per project for MVP.
+- Local V1 exposes that gateway as one shared MCP entry named `seshat`, started with `seshat mcp --registry $HOME/.seshat/config.yml`.
+- Agents discover projects with `list_projects`; every code graph tool must pass one returned `project_id`.
 - Require `project_id` in every project-scoped MCP tool.
 - Keep parsing in the CLI or CI runner.
 - Keep graph validation, merge, derived graph, indexes, and context cache on the server.

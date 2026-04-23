@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "seshat": {
+      "args": [
+        "mcp",
+        "--registry",
+        "/Users/nguyenmanhhung/.seshat/config.yml"
+      ],
+      "command": "/Users/nguyenmanhhung/.local/bin/seshat",
+      "type": "stdio"
+    }
+  }
+}
